@@ -36,6 +36,8 @@ def categorize_commits(commits: CommitList):
     suffix = None
 
     for commit in [c.lower().strip() for c in commits]:
+        if ":" not in commit:  # ignore commits not matching the format
+            continue
         prefix, message = commit.split(":", 1)
         if prefix == "alpha":
             suffix = "alpha"
