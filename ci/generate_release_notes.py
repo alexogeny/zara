@@ -4,47 +4,68 @@ from common import CommitList, Suffix, get_commits_since_last_version, get_last_
 
 
 class CategorizedCommits(TypedDict):
-    major: CommitList
-    minor: CommitList
-    patch: CommitList
-    chore: CommitList
+    breaking_changes: CommitList
+    features: CommitList
+    fixes: CommitList
+    chores: CommitList
     build: CommitList
     docs: CommitList
     test: CommitList
+    style: CommitList
+    refactor: CommitList
+    perf: CommitList
+    ci: CommitList
+    revert: CommitList
 
 
 def categorize_commits(commits: CommitList):
     categories: CategorizedCommits = {
-        "major": [],
-        "minor": [],
-        "patch": [],
-        "chore": [],
+        "breaking_changes": [],
+        "features": [],
+        "fixes": [],
+        "chores": [],
         "build": [],
         "docs": [],
         "test": [],
+        "style": [],
+        "refactor": [],
+        "perf": [],
+        "ci": [],
+        "revert": [],
     }
     suffix = None
 
     for commit in [c.lower().strip() for c in commits]:
-        if "alpha:" in commit:
+        prefix, message = commit.split(":", 1)
+        if prefix == "alpha":
             suffix = "alpha"
-        elif "beta:" in commit:
+        elif prefix == "beta":
             suffix = "beta"
 
-        if commit.startswith("breaking:"):
-            categories["major"].append(commit)
-        elif commit.startswith("feat:"):
-            categories["minor"].append(commit)
-        elif commit.startswith("fix:"):
-            categories["patch"].append(commit)
-        elif commit.startswith("chore:"):
-            categories["chore"].append(commit)
-        elif commit.startswith("build:"):
-            categories["build"].append(commit)
-        elif commit.startswith("docs:"):
-            categories["docs"].append(commit)
-        elif commit.startswith("test:"):
-            categories["test"].append(commit)
+        if prefix == "breaking":
+            categories["breaking_changes"].append(message)
+        elif prefix == "feat":
+            categories["features"].append(message)
+        elif prefix == "fix":
+            categories["fixes"].append(message)
+        elif prefix == "chore":
+            categories["chores"].append(message)
+        elif prefix == "build":
+            categories["build"].append(message)
+        elif prefix == "docs":
+            categories["docs"].append(message)
+        elif prefix == "test":
+            categories["test"].append(message)
+        elif prefix == "style":
+            categories["style"].append(message)
+        elif prefix == "refactor":
+            categories["refactor"].append(message)
+        elif prefix == "perf":
+            categories["perf"].append(message)
+        elif prefix == "ci":
+            categories["ci"].append(message)
+        elif prefix == "revert":
+            categories["revert"].append(message)
 
     return categories, suffix
 
