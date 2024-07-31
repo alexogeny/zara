@@ -1,4 +1,4 @@
-from .common import get_commits_since_last_version, get_last_version
+from common import get_commits_since_last_version, get_last_version
 
 
 def categorize_commits(commits):

@@ -1,6 +1,7 @@
 import subprocess
+import sys
 
-from .common import (
+from common import (
     determine_next_version,
     get_commits_since_last_version,
     get_last_version,
@@ -8,13 +9,17 @@ from .common import (
 )
 
 
+def quit(message):
+    print(message)
+    sys.exit(0)
+
+
 def main():
     last_version = get_last_version()
     commits = get_commits_since_last_version(last_version)
     next_version = determine_next_version(last_version, commits)
     if next_version == "noop":
-        print("No conventional commits detected. Cya!")
-        return
+        quit("No conventional commits found. Cya!")
 
     print(next_version)
     update_pyproject_toml(next_version)

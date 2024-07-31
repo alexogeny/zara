@@ -38,7 +38,7 @@ def update_pyproject_toml(version):
 
 def determine_next_version(last_version: str | None, commits: list[str]) -> str:
     if not last_version:
-        return "v0.1.0"
+        last_version = "v0.1.0"
 
     major, minor, patch = map(int, last_version.lstrip("v").split("."))
     suffix = ""
