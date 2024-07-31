@@ -57,7 +57,9 @@ def determine_next_version(last_version: str | None, commits: list[str]) -> str:
         elif commit.startswith("patch:") and bump not in ["major", "minor"]:
             bump = "patch"
 
-    if bump == "major":
+    if bump is None:
+        return "noop"
+    elif bump == "major":
         major += 1
         minor = 0
         patch = 0

@@ -12,6 +12,9 @@ def main():
     last_version = get_last_version()
     commits = get_commits_since_last_version(last_version)
     next_version = determine_next_version(last_version, commits)
+    if next_version == "noop":
+        print("No conventional commits detected. Cya!")
+        return
 
     print(next_version)
     update_pyproject_toml(next_version)
