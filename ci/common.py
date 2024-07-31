@@ -1,8 +1,13 @@
 import re
 import subprocess
+from typing import List, Literal, Union
+
+LastVersion = Union[str, None]
+CommitList = List[str]
+Suffix = Union[Literal["alpha"], Literal["beta"], None]
 
 
-def get_last_version() -> str | None:
+def get_last_version():
     result = subprocess.run(
         ["git", "describe", "--tags", "--abbrev=0"], stdout=subprocess.PIPE, text=True
     )
@@ -11,7 +16,7 @@ def get_last_version() -> str | None:
     return result.stdout.strip()
 
 
-def get_commits_since_last_version(last_version: str | None) -> list[str]:
+def get_commits_since_last_version(last_version: LastVersion):
     if last_version:
         result = subprocess.run(
             ["git", "log", f"{last_version}..HEAD", "--pretty=format:%s"],
@@ -36,7 +41,7 @@ def update_pyproject_toml(version):
         file.write(content)
 
 
-def determine_next_version(last_version: str | None, commits: list[str]) -> str:
+def determine_next_version(last_version: LastVersion, commits: CommitList):
     if not last_version:
         last_version = "v0.1.0"
 

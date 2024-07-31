@@ -1,7 +1,7 @@
-from common import get_commits_since_last_version, get_last_version
+from common import CommitList, Suffix, get_commits_since_last_version, get_last_version
 
 
-def categorize_commits(commits):
+def categorize_commits(commits: CommitList):
     major_commits = []
     minor_commits = []
     patch_commits = []
@@ -23,7 +23,12 @@ def categorize_commits(commits):
     return major_commits, minor_commits, patch_commits, suffix
 
 
-def generate_release_notes(major_commits, minor_commits, patch_commits, suffix):
+def generate_release_notes(
+    major_commits: CommitList,
+    minor_commits: CommitList,
+    patch_commits: CommitList,
+    suffix: Suffix,
+):
     notes = []
 
     if suffix:
