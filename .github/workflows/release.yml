@@ -31,7 +31,7 @@ jobs:
       - name: Generate Release Notes
         run: |
           sudo apt-get install python3-pip
-          python generate_release_notes.py
+          python ci/generate_release_notes.py
 
       - name: Create GitHub Release
         run: |
@@ -42,6 +42,6 @@ jobs:
 
       - name: Publish to PyPI
         run: |
-          bash ./bin/publish-pypi
+          bash ./ci/publish-pypi
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

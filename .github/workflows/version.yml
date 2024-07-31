@@ -20,6 +20,6 @@ jobs:
 
       - name: Determine Next Version and Update pyproject.toml
         run: |
-          python determine_next_version.py
+          python ci/determine_next_version.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
