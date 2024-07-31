@@ -1,10 +1,28 @@
+from typing import TypedDict
+
 from common import CommitList, Suffix, get_commits_since_last_version, get_last_version
 
 
+class CategorizedCommits(TypedDict):
+    major: CommitList
+    minor: CommitList
+    patch: CommitList
+    chore: CommitList
+    build: CommitList
+    docs: CommitList
+    test: CommitList
+
+
 def categorize_commits(commits: CommitList):
-    major_commits = []
-    minor_commits = []
-    patch_commits = []
+    categories: CategorizedCommits = {
+        "major": [],
+        "minor": [],
+        "patch": [],
+        "chore": [],
+        "build": [],
+        "docs": [],
+        "test": [],
+    }
     suffix = None
 
     for commit in [c.lower().strip() for c in commits]:
@@ -13,20 +31,26 @@ def categorize_commits(commits: CommitList):
         elif "beta:" in commit:
             suffix = "beta"
 
-        if commit.startswith("major:"):
-            major_commits.append(commit)
-        elif commit.startswith("minor:"):
-            minor_commits.append(commit)
-        elif commit.startswith("patch:"):
-            patch_commits.append(commit)
+        if commit.startswith("breaking:"):
+            categories["major"].append(commit)
+        elif commit.startswith("feat:"):
+            categories["minor"].append(commit)
+        elif commit.startswith("fix:"):
+            categories["patch"].append(commit)
+        elif commit.startswith("chore:"):
+            categories["chore"].append(commit)
+        elif commit.startswith("build:"):
+            categories["build"].append(commit)
+        elif commit.startswith("docs:"):
+            categories["docs"].append(commit)
+        elif commit.startswith("test:"):
+            categories["test"].append(commit)
 
-    return major_commits, minor_commits, patch_commits, suffix
+    return categories, suffix
 
 
 def generate_release_notes(
-    major_commits: CommitList,
-    minor_commits: CommitList,
-    patch_commits: CommitList,
+    commits: CategorizedCommits,
     suffix: Suffix,
 ):
     notes = []
@@ -36,17 +60,10 @@ def generate_release_notes(
             f"**This is a {suffix} release and should not be used in production.**\n"
         )
 
-    if major_commits:
-        notes.append("### Major Changes")
-        notes.extend(major_commits)
-
-    if minor_commits:
-        notes.append("### Minor Changes")
-        notes.extend(minor_commits)
-
-    if patch_commits:
-        notes.append("### Patch Changes")
-        notes.extend(patch_commits)
+    for key, values in commits:
+        if values:
+            notes.append(f"### {key.title()} Changes")
+            notes.extend(values)
 
     return "\n".join(notes)
 
@@ -54,10 +71,8 @@ def generate_release_notes(
 def main():
     last_version = get_last_version()
     commits = get_commits_since_last_version(last_version)
-    major_commits, minor_commits, patch_commits, suffix = categorize_commits(commits)
-    release_notes = generate_release_notes(
-        major_commits, minor_commits, patch_commits, suffix
-    )
+    categories, suffix = categorize_commits(commits)
+    release_notes = generate_release_notes(categories, suffix)
 
     with open("RELEASE_NOTES.md", "w") as file:
         file.write(release_notes)

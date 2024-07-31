@@ -55,11 +55,11 @@ def determine_next_version(last_version: LastVersion, commits: CommitList):
         elif commit.startswith("beta:"):
             suffix = "beta"
 
-        if commit.startswith("major:"):
+        if commit.startswith("breaking:"):
             bump = "major"
-        elif commit.startswith("minor:") and bump != "major":
+        elif commit.startswith("feat:") and bump != "major":
             bump = "minor"
-        elif commit.startswith("patch:") and bump not in ["major", "minor"]:
+        elif commit.startswith("fix:") and bump not in ["major", "minor"]:
             bump = "patch"
 
     if bump is None:
