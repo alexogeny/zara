@@ -23,11 +23,17 @@ cffi==1.16.0
 click==8.1.7
     # via uvicorn
     # via zara
+greenlet==3.0.3
+    # via sqlalchemy
 h11==0.14.0
     # via uvicorn
 orjson==3.10.6
     # via zara
 pycparser==2.22
     # via cffi
+sqlalchemy==2.0.31
+    # via zara
+typing-extensions==4.12.2
+    # via sqlalchemy
 uvicorn==0.30.4
     # via zara

@@ -13,6 +13,7 @@ dependencies = [
     "click>=8.1.7",
     "orjson>=3.10.6",
     "uvicorn>=0.30.4",
+    "sqlalchemy>=2.0.31",
 ]
 readme = "README.md"
 requires-python = ">= 3.12"
