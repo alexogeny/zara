@@ -34,6 +34,7 @@ dev-dependencies = [
     "ruff>=0.5.5",
     "pyflakes>=3.2.0",
     "pyright>=1.1.374",
+    "pytest>=8.3.2",
 ]
 
 [tool.hatch.metadata]
