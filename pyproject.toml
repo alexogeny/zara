@@ -11,7 +11,7 @@ dependencies = [
     "asyncpg>=0.29.0",
     "cffi>=1.16.0",
     "click>=8.1.7",
-    "orjson>=3.10.6",
+    "orjson>=3.10.7",
     "uvicorn>=0.30.6",
     "sqlalchemy>=2.0.31",
 ]

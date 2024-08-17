@@ -27,7 +27,7 @@ greenlet==3.0.3
     # via sqlalchemy
 h11==0.14.0
     # via uvicorn
-orjson==3.10.6
+orjson==3.10.7
     # via zara
 pycparser==2.22
     # via cffi

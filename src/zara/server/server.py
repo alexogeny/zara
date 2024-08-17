@@ -1,27 +1,10 @@
 from typing import Any, Awaitable, Callable, Dict, List
 
+from zara.types.asgi import Receive, Scope, Send
+from zara.types.http import Http
+
 GenericHandlerType = Callable[[], Awaitable[None]]
 AsgiHandlerType = Callable[[Dict[str, Any]], Awaitable[None]]
-
-
-class Response:
-    Start = "http.response.start"
-    Body = "http.response.body"
-
-
-class Http:
-    Response = Response
-
-
-# Generic ASGI application type based on scope, receive, send
-ASGIApp = Callable[
-    [
-        Dict[str, Any],
-        AsgiHandlerType,
-        AsgiHandlerType,
-    ],
-    Awaitable[None],
-]
 
 
 class SimpleASGIApp:
@@ -36,9 +19,9 @@ class SimpleASGIApp:
 
     async def __call__(
         self,
-        scope: Dict[str, Any],
-        receive: Callable[[], Awaitable[Dict[str, Any]]],
-        send: AsgiHandlerType,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
     ) -> None:
         assert scope["type"] == "http"
 
