@@ -35,10 +35,10 @@ async def send_http_response(
     await send(
         {
             "type": "http.response.body",
-            "body": orjson.dumps(body).encode("utf-8"),
+            "body": orjson.dumps(body),
         }
     )
 
 
 async def send_http_error(send: Send, status: HTTPStatus) -> None:
-    await send_http_response(send, status, {"detail": status[1]})
+    await send_http_response(send, status, {"detail": status.phrase})

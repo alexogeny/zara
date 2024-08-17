@@ -1,7 +1,8 @@
+from http import HTTPStatus
 from typing import Any, Awaitable, Callable, Dict, List
 
 from zara.types.asgi import Receive, Scope, Send
-from zara.types.http import Http
+from zara.types.http import Http, send_http_error
 
 GenericHandlerType = Callable[[], Awaitable[None]]
 AsgiHandlerType = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -41,29 +42,24 @@ class SimpleASGIApp:
 
         if path in self.routes:
             response = await self.routes[path](request)
+            await send(
+                {
+                    "type": Http.Response.Start,
+                    "status": response["status"],
+                    "headers": response["headers"],
+                }
+            )
+            await send(
+                {
+                    "type": Http.Response.Body,
+                    "body": response["body"],
+                }
+            )
         else:
-            response = {
-                "status": 404,
-                "headers": [(b"content-type", b"text/plain")],
-                "body": b"Not Found",
-            }
-
+            # print(dir(HTTPStatus.NOT_FOUND))
+            await send_http_error(send, HTTPStatus.NOT_FOUND)
         for handler in self.after_request_handlers:
             await handler(request)
-
-        await send(
-            {
-                "type": Http.Response.Start,
-                "status": response["status"],
-                "headers": response["headers"],
-            }
-        )
-        await send(
-            {
-                "type": Http.Response.Body,
-                "body": response["body"],
-            }
-        )
 
     def route(
         self, path: str
