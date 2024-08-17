@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any, Awaitable, Callable, Dict, List
 
+from zara.config.config import Config
 from zara.server.router import Router
 from zara.types.asgi import Receive, Scope, Send
 from zara.types.http import Http, send_http_error
@@ -16,9 +17,37 @@ class SimpleASGIApp:
         self.after_request_handlers: List[AsgiHandlerType] = []
         self.startup_handlers: List[GenericHandlerType] = []
         self.shutdown_handlers: List[GenericHandlerType] = []
+        self._config = None
 
     def add_router(self, router: Router) -> None:
         self.routers.append(router)
+
+    @property
+    def config(self):
+        if self._config is None:
+            self._config = Config("config.ini")
+        return self._config
+
+    def add_cors_headers(self, response: Dict[str, Any], origin: str) -> None:
+        cors_config = self.config.cors
+        if origin in cors_config.allowed_origins:
+            response["headers"].extend(
+                [
+                    (b"access-control-allow-origin", origin.encode("utf-8")),
+                    (
+                        b"access-control-allow-methods",
+                        cors_config.allowed_methods.encode("utf-8"),
+                    ),
+                    (
+                        b"access-control-allow-headers",
+                        cors_config.allowed_headers.encode("utf-8"),
+                    ),
+                ]
+            )
+            if cors_config.allow_credentials.lower() == "true":
+                response["headers"].append(
+                    (b"access-control-allow-credentials", b"true")
+                )
 
     async def __call__(
         self,
@@ -39,6 +68,8 @@ class SimpleASGIApp:
             "query_string": scope["query_string"],
         }
 
+        origin = dict(headers).get(b"origin", b"").decode("utf-8")
+
         for handler in self.before_request_handlers:
             await handler(request)
 
@@ -51,7 +82,10 @@ class SimpleASGIApp:
 
         if response is None:
             await send_http_error(send, HTTPStatus.NOT_FOUND)
+
         else:
+            if origin:
+                self.add_cors_headers(response, origin)
             await send(
                 {
                     "type": Http.Response.Start,
@@ -65,6 +99,7 @@ class SimpleASGIApp:
                     "body": response["body"],
                 }
             )
+
         for handler in self.after_request_handlers:
             await handler(request)
 

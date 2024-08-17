@@ -1,5 +1,5 @@
 import configparser
-from typing import Any
+from typing import Any, List
 
 
 class Config:
@@ -27,3 +27,22 @@ class _Section:
         if key in self._section:
             return self._section[key]
         raise AttributeError(f"No such key: {key}")
+
+    @property
+    def allowed_origins(self) -> List[str]:
+        return [
+            origin.strip()
+            for origin in self._section.get("allowed_origins", "").split(",")
+        ]
+
+    @property
+    def allowed_methods(self) -> str:
+        return self._section.get("allowed_methods", "")
+
+    @property
+    def allowed_headers(self) -> str:
+        return self._section.get("allowed_headers", "")
+
+    @property
+    def allow_credentials(self) -> str:
+        return self._section.get("allow_credentials", "false")
