@@ -101,6 +101,9 @@ app = SimpleASGIApp()
 
 async def log_request(request: Dict[str, Any]) -> None:
     print(f"Received request: {request['method']} {request['path']}")
+    from zara.config import config
+
+    print(f"config {config.server.port} {config.server.host}")
 
 
 async def log_response(request: Dict[str, Any]) -> None:
