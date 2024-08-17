@@ -31,10 +31,12 @@ build-backend = "hatchling.build"
 [tool.rye]
 managed = true
 dev-dependencies = [
-    "ruff>=0.5.5",
+    "ruff>=0.6.1",
     "pyflakes>=3.2.0",
-    "pyright>=1.1.374",
+    "pyright>=1.1.376",
     "pytest>=8.3.2",
+    "flake8>=7.1.1",
+    "isort>=5.13.2",
 ]
 
 [tool.hatch.metadata]
@@ -42,3 +44,11 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zara"]
+
+[tool.rye.scripts]
+example = { cmd = "uvicorn example:app --reload" }
+lint = {chain = ["lint-isort", "lint-ruff", "lint-flake8", "lint-pyright"]}
+lint-ruff = "ruff format ."
+lint-flake8 = "flake8 src"
+lint-isort = "isort ."
+lint-pyright = "pyright src"
