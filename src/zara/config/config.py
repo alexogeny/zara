@@ -9,7 +9,8 @@ class Config:
     def __new__(cls, config_file: str = "config.ini") -> "Config":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._config.read(config_file)
+            with open(config_file, "r") as f:
+                cls._config.read_file(f)
         return cls._instance
 
     def __getattr__(self, section: str) -> Any:
@@ -26,6 +27,3 @@ class _Section:
         if key in self._section:
             return self._section[key]
         raise AttributeError(f"No such key: {key}")
-
-
-config = Config()
