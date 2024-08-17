@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any, Awaitable, Callable, Dict, List
 
+from zara.server.router import Router
 from zara.types.asgi import Receive, Scope, Send
 from zara.types.http import Http, send_http_error
 
@@ -10,13 +11,14 @@ AsgiHandlerType = Callable[[Dict[str, Any]], Awaitable[None]]
 
 class SimpleASGIApp:
     def __init__(self) -> None:
-        self.routes: Dict[
-            str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
-        ] = {}
+        self.routers: List[Router] = []
         self.before_request_handlers: List[AsgiHandlerType] = []
         self.after_request_handlers: List[AsgiHandlerType] = []
         self.startup_handlers: List[GenericHandlerType] = []
         self.shutdown_handlers: List[GenericHandlerType] = []
+
+    def add_router(self, router: Router) -> None:
+        self.routers.append(router)
 
     async def __call__(
         self,
@@ -40,8 +42,16 @@ class SimpleASGIApp:
         for handler in self.before_request_handlers:
             await handler(request)
 
-        if path in self.routes:
-            response = await self.routes[path](request)
+        response = None
+        for router in self.routers:
+            handler = await router.resolve(path, method)
+            if handler:
+                response = await handler(request)
+                break
+
+        if response is None:
+            await send_http_error(send, HTTPStatus.NOT_FOUND)
+        else:
             await send(
                 {
                     "type": Http.Response.Start,
@@ -55,9 +65,6 @@ class SimpleASGIApp:
                     "body": response["body"],
                 }
             )
-        else:
-            # print(dir(HTTPStatus.NOT_FOUND))
-            await send_http_error(send, HTTPStatus.NOT_FOUND)
         for handler in self.after_request_handlers:
             await handler(request)
 
@@ -91,6 +98,15 @@ class SimpleASGIApp:
         for handler in self.shutdown_handlers:
             await handler()
 
+    async def _dispatch(
+        self, send, path: str, request: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        for router in self.routers:
+            response = await router.handle_request(path, request)
+            if response["status"] != 404:
+                return response
+        await send_http_error(send, HTTPStatus.NOT_FOUND)
+
 
 app = SimpleASGIApp()
 
@@ -116,11 +132,25 @@ app.add_after_request_handler(log_response)
 app.add_startup_handler(on_startup)
 app.add_shutdown_handler(on_shutdown)
 
+router = Router()
 
-@app.route("/")
-async def hello_world(request):
+
+@router.add_route(path="/", method="GET")
+async def hello_world(request: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": 200,
         "headers": [(b"content-type", b"text/plain")],
-        "body": b"Hello, world!",
+        "body": b"Hello, World!",
     }
+
+
+@router.add_route(path="/goodbye", method="POST")
+async def goodbye_world(request: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "status": 200,
+        "headers": [(b"content-type", b"text/plain")],
+        "body": b"Goodbye, World!",
+    }
+
+
+app.add_router(router)
