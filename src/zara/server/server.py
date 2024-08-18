@@ -3,7 +3,7 @@ from typing import Any, Awaitable, Callable, Dict, List
 
 from zara.config.config import Config
 from zara.server.router import Router
-from zara.types.asgi import Receive, Scope, Send
+from zara.types.asgi import ASGI, Receive, Scope, Send
 from zara.types.http import Http, send_http_error
 
 GenericHandlerType = Callable[[], Awaitable[None]]
@@ -12,7 +12,7 @@ AsgiHandlerType = Callable[[Dict[str, Any]], Awaitable[None]]
 
 class SimpleASGIApp:
     def __init__(self) -> None:
-        self.routers: List[Router] = []
+        self.routers: list[Router] = []
         self.before_request_handlers: List[AsgiHandlerType] = []
         self.after_request_handlers: List[AsgiHandlerType] = []
         self.startup_handlers: List[GenericHandlerType] = []
@@ -49,23 +49,19 @@ class SimpleASGIApp:
                     (b"access-control-allow-credentials", b"true")
                 )
 
-    async def __call__(
-        self,
-        scope: Scope,
-        receive: Receive,
-        send: Send,
-    ) -> None:
-        assert scope["type"] == "http"
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        asgi = ASGI(scope, receive, send)
+        assert asgi.scope["type"] == "http"
 
-        path = scope["path"]
-        method = scope["method"]
-        headers = scope["headers"]
+        path = asgi.scope["path"]
+        method = asgi.scope["method"]
+        headers = asgi.scope["headers"]
 
         request = {
             "method": method,
             "path": path,
             "headers": headers,
-            "query_string": scope["query_string"],
+            "query_string": asgi.scope["query_string"],
         }
 
         origin = dict(headers).get(b"origin", b"").decode("utf-8")
@@ -75,25 +71,29 @@ class SimpleASGIApp:
 
         response = None
         for router in self.routers:
-            handler = await router.resolve(path, method)
-            if handler:
+            if not await router.match(asgi.scope["path"]):
+                continue
+
+            handler = await router.resolve(asgi)
+            if handler is not None:
                 response = await handler(request)
-                break
+
+            break
 
         if response is None:
-            await send_http_error(send, HTTPStatus.NOT_FOUND)
+            await send_http_error(asgi.send, HTTPStatus.NOT_FOUND)
 
         else:
             if origin:
                 self.add_cors_headers(response, origin)
-            await send(
+            await asgi.send(
                 {
                     "type": Http.Response.Start,
                     "status": response["status"],
                     "headers": response["headers"],
                 }
             )
-            await send(
+            await asgi.send(
                 {
                     "type": Http.Response.Body,
                     "body": response["body"],
@@ -141,51 +141,3 @@ class SimpleASGIApp:
             if response["status"] != 404:
                 return response
         await send_http_error(send, HTTPStatus.NOT_FOUND)
-
-
-app = SimpleASGIApp()
-
-
-async def log_request(request: Dict[str, Any]) -> None:
-    print(f"Received request: {request['method']} {request['path']}")
-
-
-async def log_response(request: Dict[str, Any]) -> None:
-    print(f"Handled request: {request['method']} {request['path']}")
-
-
-async def on_startup() -> None:
-    print("Application is starting up...")
-
-
-async def on_shutdown() -> None:
-    print("Application is shutting down...")
-
-
-app.add_before_request_handler(log_request)
-app.add_after_request_handler(log_response)
-app.add_startup_handler(on_startup)
-app.add_shutdown_handler(on_shutdown)
-
-router = Router()
-
-
-@router.add_route(path="/", method="GET")
-async def hello_world(request: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "status": 200,
-        "headers": [(b"content-type", b"text/plain")],
-        "body": b"Hello, World!",
-    }
-
-
-@router.add_route(path="/goodbye", method="POST")
-async def goodbye_world(request: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "status": 200,
-        "headers": [(b"content-type", b"text/plain")],
-        "body": b"Goodbye, World!",
-    }
-
-
-app.add_router(router)

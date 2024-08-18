@@ -27,7 +27,7 @@ class TestCORS(unittest.TestCase):
         self.app = SimpleASGIApp()
         self.router = Router()
 
-        @self.router.add_route(path="/", method="GET")
+        @self.router.route(path="/", method="GET")
         async def hello_world(request: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 "status": 200,

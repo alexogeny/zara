@@ -1,25 +1,86 @@
-from typing import Any, Awaitable, Callable, Dict
+import http
+from typing import Any, Awaitable, Callable, Dict, Self, Union
+
+from zara.types.asgi import ASGI, CallableAwaitable
+from zara.utils import camel_to_snake
+
+WrappedRoute = Callable[..., CallableAwaitable]
+
+
+class Route:
+    def __init__(
+        self,
+        router,
+        path: str,
+        method: http.HTTPMethod,
+        handler: Callable[..., Awaitable[Dict[str, Any]]],
+        public: bool = True,
+    ):
+        self.method = method
+        self.router = router
+        self.path = path
+        self.handler = handler
+        self.public = public
+
+    def __repr__(self):
+        return f"[{self.router.name}]Route={self.path}"
+
+    async def match(self, asgi: ASGI) -> bool:
+        if self.method != asgi.scope["method"]:
+            return False
+
+        if not asgi.scope["path"].startswith(f"/{self.router.name}"):
+            return False
+
+        if self.public is False:
+            return False
+
+        return True
 
 
 class Router:
-    def __init__(self) -> None:
-        self.routes: Dict[
-            str, Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]]
-        ] = {}
+    def __init__(self, name="") -> None:
+        self.routes: list[Route] = []
+        self.name = camel_to_snake(name)
 
     def add_route(
-        self, path: str, method: str
-    ) -> Callable[[Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]], None]:
-        def decorator(
-            handler: Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]],
-        ) -> None:
-            if path not in self.routes:
-                self.routes[path] = {}
-            self.routes[path][method.upper()] = handler
+        self,
+        router: Self,
+        path: str,
+        method: str,
+        handler: Callable[..., Awaitable[Dict[str, Any]]],
+        **kwargs: dict[Any, Any],
+    ) -> None:
+        route = Route(router, path, method, handler, **kwargs)
+        self.routes.append(route)
+
+    def route(self, path: str, method: str, **kwargs: dict[Any, Any]) -> WrappedRoute:
+        def decorator(func: CallableAwaitable) -> CallableAwaitable:
+            self.add_route(self, path, method, func, **kwargs)
+            return func
 
         return decorator
 
-    async def resolve(
-        self, path: str, method: str
-    ) -> Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]:
-        return self.routes.get(path, {}).get(method.upper())
+    def get(self, path: str, **kwargs: Any):
+        return self.route(path, "GET", **kwargs)
+
+    def post(self, path: str, **kwargs: Any):
+        return self.route(path, "POST", **kwargs)
+
+    def patch(self, path: str, **kwargs: Any):
+        return self.route(path, "PATCH", **kwargs)
+
+    def delete(self, path: str, **kwargs: Any):
+        return self.route(path, "DELETE", **kwargs)
+
+    async def match(self, path: str) -> bool:
+        if path.startswith(f"/{self.name}"):
+            return True
+        return False
+
+    async def resolve(self, asgi: ASGI) -> Union[None, Awaitable[Dict[str, Any]]]:
+        for route in self.routes:
+            match_route = await route.match(asgi)
+            if match_route is True:
+                return route.handler
+        return None
