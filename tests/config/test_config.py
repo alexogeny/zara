@@ -58,7 +58,3 @@ class TestConfig(unittest.TestCase):
     def test_no_such_file(self):
         with self.assertRaises(FileNotFoundError):
             Config("non_existent_file.ini")
-
-
-if __name__ == "__main__":
-    unittest.main()

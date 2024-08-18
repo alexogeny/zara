@@ -1,4 +1,3 @@
-import asyncio
 import unittest
 from typing import Any, Dict
 from unittest.mock import AsyncMock, mock_open, patch
@@ -8,7 +7,7 @@ from zara.server.router import Router
 from zara.server.server import SimpleASGIApp
 
 
-class TestCORS(unittest.TestCase):
+class TestCORS(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         config_content = """
         [server]
@@ -37,7 +36,7 @@ class TestCORS(unittest.TestCase):
 
         self.app.add_router(self.router)
 
-    def test_cors_headers(self):
+    async def test_cors_headers(self):
         send_mock = AsyncMock()
 
         async def run_app_with_scope(scope):
@@ -51,7 +50,7 @@ class TestCORS(unittest.TestCase):
             "query_string": b"",
         }
 
-        asyncio.run(run_app_with_scope(scope))
+        await run_app_with_scope(scope)
         send_mock.assert_any_await(
             {
                 "type": "http.response.start",
@@ -72,7 +71,7 @@ class TestCORS(unittest.TestCase):
             }
         )
 
-    def test_cors_no_origin(self):
+    async def test_cors_no_origin(self):
         send_mock = AsyncMock()
 
         async def run_app_with_scope(scope):
@@ -86,8 +85,7 @@ class TestCORS(unittest.TestCase):
             "query_string": b"",
         }
 
-        asyncio.run(run_app_with_scope(scope))
-
+        await run_app_with_scope(scope)
         send_mock.assert_any_await(
             {
                 "type": "http.response.start",
@@ -102,7 +100,7 @@ class TestCORS(unittest.TestCase):
             }
         )
 
-    def test_cors_not_allowed_origin(self):
+    async def test_cors_not_allowed_origin(self):
         send_mock = AsyncMock()
 
         async def run_app_with_scope(scope):
@@ -116,7 +114,7 @@ class TestCORS(unittest.TestCase):
             "query_string": b"",
         }
 
-        asyncio.run(run_app_with_scope(scope))
+        await run_app_with_scope(scope)
 
         send_mock.assert_any_await(
             {
