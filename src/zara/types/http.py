@@ -7,8 +7,18 @@ from .asgi import Send
 
 
 class Response:
-    Start: str = "http.response.start"
-    Body: str = "http.response.body"
+    def Start(status: int = HTTPStatus.OK, headers=[(b"content-type", b"text/plain")]):
+        return {
+            "type": "http.response.start",
+            "status": status,
+            "headers": headers,
+        }
+
+    def Body(content: bytes):
+        return {"type": "http.response.body", "body": content}
+
+    def Error(status: HTTPStatus):
+        return {"detail": status.phrase}
 
 
 class Http:
@@ -41,4 +51,4 @@ async def send_http_response(
 
 
 async def send_http_error(send: Send, status: HTTPStatus) -> None:
-    await send_http_response(send, status, {"detail": status.phrase})
+    await send_http_response(send, status, Http.Response.Error(status))

@@ -87,31 +87,15 @@ class SimpleASGIApp:
             if origin:
                 self.add_cors_headers(response, origin)
             await asgi.send(
-                {
-                    "type": Http.Response.Start,
-                    "status": response["status"],
-                    "headers": response["headers"],
-                }
+                Http.Response.Start(
+                    status=response["status"],
+                    headers=response["headers"],
+                )
             )
-            await asgi.send(
-                {
-                    "type": Http.Response.Body,
-                    "body": response["body"],
-                }
-            )
+            await asgi.send(Http.Response.Body(content=response["body"]))
 
         for handler in self.after_request_handlers:
             await handler(request)
-
-    def route(
-        self, path: str
-    ) -> Callable[[Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]], None]:
-        def decorator(
-            func: Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]],
-        ) -> None:
-            self.routes[path] = func
-
-        return decorator
 
     def add_before_request_handler(self, handler: AsgiHandlerType) -> None:
         self.before_request_handlers.append(handler)
