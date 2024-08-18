@@ -1,6 +1,7 @@
 import http
 from typing import Any, Awaitable, Callable, Dict, Self, Union
 
+from zara.login.auth_required import auth_required
 from zara.types.asgi import ASGI, CallableAwaitable
 from zara.utils import camel_to_snake
 
@@ -54,8 +55,17 @@ class Router:
         route = Route(router, path, method, handler, **kwargs)
         self.routes.append(route)
 
-    def route(self, path: str, method: str, **kwargs: dict[Any, Any]) -> WrappedRoute:
+    def route(
+        self,
+        path: str,
+        method: str,
+        permissions=None,
+        roles=None,
+        **kwargs: dict[Any, Any],
+    ) -> WrappedRoute:
         def decorator(func: CallableAwaitable) -> CallableAwaitable:
+            if permissions or roles:
+                func = auth_required(permissions=permissions, roles=roles)(func)
             self.add_route(self, path, method, func, **kwargs)
             return func
 
