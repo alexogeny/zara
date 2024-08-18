@@ -17,8 +17,17 @@ def base64url_decode(data: str) -> bytes:
 
 
 def create_jwt(
-    payload: Dict[str, str], secret: str = SECRET_KEY, algorithm: str = "HS256"
+    payload: Dict[str, str],
+    roles: Optional[list[str]] = None,
+    permissions: Optional[list[str]] = None,
+    secret: str = SECRET_KEY,
+    algorithm: str = "HS256",
 ) -> str:
+    if roles:
+        payload["roles"] = roles
+    if permissions:
+        payload["permissions"] = permissions
+
     header = {"alg": algorithm, "typ": "JWT"}
 
     header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
