@@ -11,13 +11,14 @@ AsgiHandlerType = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
 class SimpleASGIApp:
-    def __init__(self) -> None:
+    def __init__(self, config=None) -> None:
         self.routers: list[Router] = []
         self.before_request_handlers: List[AsgiHandlerType] = []
         self.after_request_handlers: List[AsgiHandlerType] = []
         self.startup_handlers: List[GenericHandlerType] = []
         self.shutdown_handlers: List[GenericHandlerType] = []
         self._config = None
+        self._raw_config = config
         self.rate_limit = (100, 60)  # 100 requests every 60 seconds
 
     def add_router(self, router: Router) -> None:
@@ -27,32 +28,14 @@ class SimpleASGIApp:
     @property
     def config(self):
         if self._config is None:
-            self._config = Config("config.ini")
+            if self._raw_config is not None:
+                self._config = Config(config=self._raw_config)
+            else:
+                self._config = Config("config.ini")
         return self._config
 
-    def add_cors_headers(self, response: Dict[str, Any], origin: str) -> None:
-        cors_config = self.config.cors
-        if origin in cors_config.allowed_origins:
-            response["headers"].extend(
-                [
-                    (b"access-control-allow-origin", origin.encode("utf-8")),
-                    (
-                        b"access-control-allow-methods",
-                        cors_config.allowed_methods.encode("utf-8"),
-                    ),
-                    (
-                        b"access-control-allow-headers",
-                        cors_config.allowed_headers.encode("utf-8"),
-                    ),
-                ]
-            )
-            if cors_config.allow_credentials.lower() == "true":
-                response["headers"].append(
-                    (b"access-control-allow-credentials", b"true")
-                )
-
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        asgi = ASGI(scope, receive, send)
+        asgi = ASGI(scope, receive, send, self.config)
         assert asgi.scope["type"] == "http"
 
         path = asgi.scope["path"]
@@ -67,8 +50,6 @@ class SimpleASGIApp:
             "asgi": asgi,
             "error_was_raised": False,
         }
-
-        origin = dict(headers).get(b"origin", b"").decode("utf-8")
 
         for handler in self.before_request_handlers:
             await handler(request)
@@ -89,8 +70,6 @@ class SimpleASGIApp:
             if request["error_was_raised"] is False:
                 await send_http_error(asgi.send, HTTPStatus.NOT_FOUND)
         else:
-            if origin:
-                self.add_cors_headers(response, origin)
             await asgi.send(
                 Http.Response.Start(
                     status=response["status"],

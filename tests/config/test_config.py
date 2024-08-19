@@ -54,7 +54,3 @@ class TestConfig(unittest.TestCase):
 
             self.assertIs(config1, config2)
             self.assertEqual(config1.server.port, config2.server.port)
-
-    def test_no_such_file(self):
-        with self.assertRaises(FileNotFoundError):
-            Config("non_existent_file.ini")

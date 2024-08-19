@@ -1,27 +1,21 @@
 import unittest
-from unittest.mock import AsyncMock, mock_open, patch
-
-from zara.config.config import Config
+from unittest.mock import AsyncMock
 
 from ..helpers import assert_status_code_with_response_body, make_scope, make_test_app
 
 
 class TestCORS(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        config_content = """
-        [server]
-        port = 8080
-        host = 127.0.0.1
-
-        [cors]
-        allowed_origins = https://example.com, https://another.com
-        allowed_methods = GET, POST, OPTIONS
-        allowed_headers = Content-Type, Authorization
-        allow_credentials = true
-        """
-        with patch("builtins.open", mock_open(read_data=config_content)):
-            self.config = Config("config.ini")
-        self.app = make_test_app()
+        self.config = {
+            "server": {"port": "8080", "host": "127.0.0.1"},
+            "cors": {
+                "allowed_origins": "https://example.com, https://another.com",
+                "allowed_methods": "GET, POST, OPTIONS",
+                "allowed_headers": "Content-Type, Authorization",
+                "allow_credentials": "true",
+            },
+        }
+        self.app = make_test_app(config=self.config)
 
     async def test_cors_headers(self):
         send_mock = AsyncMock()

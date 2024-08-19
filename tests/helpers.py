@@ -58,8 +58,8 @@ async def async_ratelimited(request):
     }
 
 
-def make_test_app():
-    app = SimpleASGIApp()
+def make_test_app(**kwargs):
+    app = SimpleASGIApp(**kwargs)
     app.rate_limit = (3, 5)
     router = Router()
     router.rate_limit = (2, 5)

@@ -3,15 +3,18 @@ from typing import Any, List
 
 
 class Config:
-    _instance = None
-    _config = configparser.ConfigParser()
-
-    def __new__(cls, config_file: str = "config.ini") -> "Config":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            with open(config_file, "r") as f:
-                cls._config.read_file(f)
-        return cls._instance
+    def __init__(
+        self, config_file: str = None, config: dict[Any, Any] = None
+    ) -> "Config":
+        self._config = configparser.ConfigParser()
+        if config:
+            self._config.read_dict(config)
+        else:
+            try:
+                with open(config_file, "r") as f:
+                    self._config.read_file(f)
+            except FileNotFoundError:
+                self._config.read_dict({})
 
     def __getattr__(self, section: str) -> Any:
         if section in self._config:
