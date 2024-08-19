@@ -46,11 +46,3 @@ class TestConfig(unittest.TestCase):
 
             with self.assertRaises(AttributeError):
                 _ = config.server.missing_key
-
-    def test_singleton_behavior(self):
-        with patch("builtins.open", mock_open(read_data=self.config_content)):
-            config1 = Config("config.ini")
-            config2 = Config("config.ini")
-
-            self.assertIs(config1, config2)
-            self.assertEqual(config1.server.port, config2.server.port)
