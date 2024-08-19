@@ -1,9 +1,8 @@
 from functools import wraps
-from http import HTTPStatus
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, List, Optional
 
 from zara.login.jwt import verify_jwt
-from zara.types.http import Http
+from zara.types.http import send_http_response
 
 
 def auth_required(
@@ -12,42 +11,45 @@ def auth_required(
 ):
     def decorator(func: Callable[..., Awaitable[None]]):
         @wraps(func)
-        async def wrapper(scope: Dict[str, Any], receive: Callable, send: Callable):
+        async def wrapper(request):
+            scope, send = request["asgi"].scope, request["asgi"].send
             headers = dict(scope.get("headers", []))
             authorization = headers.get(b"authorization", b"").decode()
 
             if not authorization.startswith("Bearer "):
-                await send(Http.Response.Start(status=HTTPStatus.FORBIDDEN))
-                await send(
-                    Http.Response.Detail(
-                        message="Authorization header missing or malformed."
-                    )
+                request["error_was_raised"] = True
+                return await send_http_response(
+                    send,
+                    403,
+                    {"detail": "Malformed authorization header"},
                 )
-                return
 
             token = authorization[7:]
             jwt_payload = verify_jwt(token)
             if jwt_payload is None:
-                await send(Http.Response.Start(status=HTTPStatus.FORBIDDEN))
-                await send(Http.Response.Detail(message="Invalid token"))
-                return
+                request["error_was_raised"] = True
+                return await send_http_response(send, 403, {"detail": "Invalid token"})
 
             user_permissions = jwt_payload.get("permissions", [])
             user_roles = jwt_payload.get("roles", [])
 
             if permissions:
                 if not all(p in user_permissions for p in permissions):
-                    await send(Http.Response.Start(status=HTTPStatus.FORBIDDEN))
-                    await send(Http.Response.Detail(message="Insufficient permissions"))
-                    return
+                    request["error_was_raised"] = True
+                    return await send_http_response(
+                        send,
+                        403,
+                        {"detail": "Insufficient permissions"},
+                    )
 
             if roles:
                 if not any(r in user_roles for r in roles):
-                    await send(Http.Response.Start(status=HTTPStatus.FORBIDDEN))
-                    await send(Http.Response.Detail(message="Insufficient roles"))
-                    return
+                    request["error_was_raised"] = True
+                    return await send_http_response(
+                        send, 403, {"detail": "Insufficient roles"}
+                    )
 
-            await func(scope, receive, send)
+            return await func(request)
 
         return wrapper
 
