@@ -26,6 +26,11 @@ class TestApplyRateLimitDecorator(unittest.TestCase):
         await self.app(scope, None, send)
         return send
 
+    def simulate_n_asgi_requests(self, n, path, headers):
+        for _ in range(n):
+            send = asyncio.run(self.simulate_asgi_request(path, "GET", headers))
+            assert_status_code_with_response_body(send, 200, b"Not rate limited!")
+
     def test_not_rate_limited(self):
         token = create_jwt({"user_id": "admin"}, roles=["admin"], permissions=["read"])
         headers = {
@@ -39,8 +44,7 @@ class TestApplyRateLimitDecorator(unittest.TestCase):
         headers = {
             b"authorization": f"Bearer {token}".encode(),
         }
-        send = asyncio.run(self.simulate_asgi_request("/rate-limited", "GET", headers))
-        assert_status_code_with_response_body(send, 200, b"Not rate limited!")
+        self.simulate_n_asgi_requests(1, "/rate-limited", headers)
         send = asyncio.run(self.simulate_asgi_request("/rate-limited", "GET", headers))
         assert_status_code_with_response_body(
             send,
@@ -54,14 +58,7 @@ class TestApplyRateLimitDecorator(unittest.TestCase):
         headers = {
             b"authorization": f"Bearer {token}".encode(),
         }
-        send = asyncio.run(
-            self.simulate_asgi_request("/rate-limited-router", "GET", headers)
-        )
-        assert_status_code_with_response_body(send, 200, b"Not rate limited!")
-        send = asyncio.run(
-            self.simulate_asgi_request("/rate-limited-router", "GET", headers)
-        )
-        assert_status_code_with_response_body(send, 200, b"Not rate limited!")
+        self.simulate_n_asgi_requests(2, "/rate-limited-router", headers)
         send = asyncio.run(
             self.simulate_asgi_request("/rate-limited-router", "GET", headers)
         )
@@ -77,18 +74,7 @@ class TestApplyRateLimitDecorator(unittest.TestCase):
         headers = {
             b"authorization": f"Bearer {token}".encode(),
         }
-        send = asyncio.run(
-            self.simulate_asgi_request("/two/rate-limited-server", "GET", headers)
-        )
-        assert_status_code_with_response_body(send, 200, b"Not rate limited!")
-        send = asyncio.run(
-            self.simulate_asgi_request("/two/rate-limited-server", "GET", headers)
-        )
-        assert_status_code_with_response_body(send, 200, b"Not rate limited!")
-        send = asyncio.run(
-            self.simulate_asgi_request("/two/rate-limited-server", "GET", headers)
-        )
-        assert_status_code_with_response_body(send, 200, b"Not rate limited!")
+        self.simulate_n_asgi_requests(3, "/two/rate-limited-server", headers)
         send = asyncio.run(
             self.simulate_asgi_request("/two/rate-limited-server", "GET", headers)
         )
