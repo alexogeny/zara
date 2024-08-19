@@ -1,12 +1,9 @@
 import unittest
-from typing import Any, Dict
 from unittest.mock import AsyncMock, mock_open, patch
 
 from zara.config.config import Config
-from zara.server.router import Router
-from zara.server.server import SimpleASGIApp
 
-from ..helpers import assert_status_code_with_response_body, make_scope
+from ..helpers import assert_status_code_with_response_body, make_scope, make_test_app
 
 
 class TestCORS(unittest.IsolatedAsyncioTestCase):
@@ -24,19 +21,7 @@ class TestCORS(unittest.IsolatedAsyncioTestCase):
         """
         with patch("builtins.open", mock_open(read_data=config_content)):
             self.config = Config("config.ini")
-
-        self.app = SimpleASGIApp()
-        self.router = Router()
-
-        @self.router.route(path="/", method="GET")
-        async def hello_world(request: Dict[str, Any]) -> Dict[str, Any]:
-            return {
-                "status": 200,
-                "headers": [(b"content-type", b"text/plain")],
-                "body": b"Hello, World!",
-            }
-
-        self.app.add_router(self.router)
+        self.app = make_test_app()
 
     async def test_cors_headers(self):
         send_mock = AsyncMock()

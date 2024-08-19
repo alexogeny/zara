@@ -18,9 +18,11 @@ class SimpleASGIApp:
         self.startup_handlers: List[GenericHandlerType] = []
         self.shutdown_handlers: List[GenericHandlerType] = []
         self._config = None
+        self.rate_limit = (100, 60)  # 100 requests every 60 seconds
 
     def add_router(self, router: Router) -> None:
         self.routers.append(router)
+        router.app = self
 
     @property
     def config(self):
@@ -72,7 +74,9 @@ class SimpleASGIApp:
             await handler(request)
 
         response = None
-        for router in self.routers:
+        non_root = [r for r in self.routers if r.name]
+        root = [r for r in self.routers if not r.name]
+        for router in non_root + root:
             if not await router.match(asgi.scope["path"]):
                 continue
 

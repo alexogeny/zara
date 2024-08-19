@@ -2,6 +2,7 @@ import http
 from typing import Any, Awaitable, Callable, Dict, Self, Union
 
 from zara.login.auth_required import auth_required
+from zara.security.rate_limit import apply_rate_limit
 from zara.types.asgi import ASGI, CallableAwaitable
 from zara.utils import camel_to_snake
 
@@ -33,16 +34,23 @@ class Route:
         if self.public is False:
             return False
 
-        if not asgi.scope["path"] == self.path:
+        prefix = ""
+        if self.router.name:
+            prefix = f"/{self.router.name}"
+
+        if not asgi.scope["path"] == prefix + self.path:
             return False
 
         return True
 
 
 class Router:
+    app = None
+
     def __init__(self, name="") -> None:
         self.routes: list[Route] = []
         self.name = camel_to_snake(name)
+        self.rate_limit = (100, 60)
 
     def add_route(
         self,
@@ -61,9 +69,15 @@ class Router:
         method: str,
         permissions=None,
         roles=None,
+        ratelimit=None,
         **kwargs: dict[Any, Any],
     ) -> WrappedRoute:
         def decorator(func: CallableAwaitable) -> CallableAwaitable:
+            func = apply_rate_limit(
+                router=self,
+                limit=100 if not ratelimit else ratelimit[0],
+                period=60 if not ratelimit else ratelimit[1],
+            )(func)
             if permissions or roles:
                 func = auth_required(permissions=permissions, roles=roles)(func)
             self.add_route(self, path, method, func, **kwargs)
