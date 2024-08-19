@@ -57,6 +57,9 @@ async def send_http_response(
         }
     )
 
+async def forbidden(send, reason) -> None:
+    await send(Http.Response.Start(status=HTTPStatus.FORBIDDEN))
+    await send(Http.Response.Detail(message=reason))
 
 async def send_http_error(send: Send, status: HTTPStatus) -> None:
     await send_http_response(send, status, Http.Response.Error(status))

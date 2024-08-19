@@ -62,6 +62,8 @@ class SimpleASGIApp:
             "path": path,
             "headers": headers,
             "query_string": asgi.scope["query_string"],
+            "asgi": asgi,
+            "error_was_raised": False,
         }
 
         origin = dict(headers).get(b"origin", b"").decode("utf-8")
@@ -77,12 +79,11 @@ class SimpleASGIApp:
             handler = await router.resolve(asgi)
             if handler is not None:
                 response = await handler(request)
-
             break
 
         if response is None:
-            await send_http_error(asgi.send, HTTPStatus.NOT_FOUND)
-
+            if request["error_was_raised"] is False:
+                await send_http_error(asgi.send, HTTPStatus.NOT_FOUND)
         else:
             if origin:
                 self.add_cors_headers(response, origin)

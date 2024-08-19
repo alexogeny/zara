@@ -30,10 +30,10 @@ class Route:
         if self.method != asgi.scope["method"]:
             return False
 
-        if not asgi.scope["path"].startswith(f"/{self.router.name}"):
+        if self.public is False:
             return False
 
-        if self.public is False:
+        if not asgi.scope["path"] == self.path:
             return False
 
         return True

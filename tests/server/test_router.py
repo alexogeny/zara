@@ -2,6 +2,7 @@ import unittest
 from typing import Any, Dict
 from unittest.mock import AsyncMock
 
+from tests.helpers import assert_status_code_with_response_body, make_scope
 from zara.server.router import Router
 from zara.server.server import SimpleASGIApp
 
@@ -41,49 +42,11 @@ class TestRouter(unittest.IsolatedAsyncioTestCase):
         async def run_app_with_scope(scope):
             await app(scope, None, send_mock)
 
-        scope = {
-            "type": "http",
-            "path": "/",
-            "method": "GET",
-            "headers": [],
-            "query_string": b"",
-        }
+        scope = make_scope()
         await run_app_with_scope(scope)
+        assert_status_code_with_response_body(send_mock, 200, b"Hello, World!")
 
-        send_mock.assert_any_call(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"content-type", b"text/plain")],
-            }
-        )
-        send_mock.assert_any_call(
-            {
-                "type": "http.response.body",
-                "body": b"Hello, World!",
-            }
-        )
-
-        scope = {
-            "type": "http",
-            "path": "/goodbye",
-            "method": "POST",
-            "headers": [],
-            "query_string": b"",
-        }
+        scope = make_scope(path="/goodbye", method="POST")
         send_mock.reset_mock()
         await run_app_with_scope(scope)
-
-        send_mock.assert_any_call(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"content-type", b"text/plain")],
-            }
-        )
-        send_mock.assert_any_call(
-            {
-                "type": "http.response.body",
-                "body": b"Goodbye, World!",
-            }
-        )
+        assert_status_code_with_response_body(send_mock, 200, b"Goodbye, World!")

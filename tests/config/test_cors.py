@@ -6,6 +6,8 @@ from zara.config.config import Config
 from zara.server.router import Router
 from zara.server.server import SimpleASGIApp
 
+from ..helpers import assert_status_code_with_response_body, make_scope
+
 
 class TestCORS(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -42,33 +44,20 @@ class TestCORS(unittest.IsolatedAsyncioTestCase):
         async def run_app_with_scope(scope):
             await self.app(scope, None, send_mock)
 
-        scope = {
-            "type": "http",
-            "path": "/",
-            "method": "GET",
-            "headers": [(b"origin", b"https://example.com")],
-            "query_string": b"",
-        }
+        scope = make_scope(headers=[(b"origin", b"https://example.com")])
 
         await run_app_with_scope(scope)
-        send_mock.assert_any_await(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    (b"content-type", b"text/plain"),
-                    (b"access-control-allow-origin", b"https://example.com"),
-                    (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
-                    (b"access-control-allow-headers", b"Content-Type, Authorization"),
-                    (b"access-control-allow-credentials", b"true"),
-                ],
-            }
-        )
-        send_mock.assert_any_await(
-            {
-                "type": "http.response.body",
-                "body": b"Hello, World!",
-            }
+        assert_status_code_with_response_body(
+            send_mock,
+            200,
+            b"Hello, World!",
+            headers=[
+                (b"content-type", b"text/plain"),
+                (b"access-control-allow-origin", b"https://example.com"),
+                (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+                (b"access-control-allow-headers", b"Content-Type, Authorization"),
+                (b"access-control-allow-credentials", b"true"),
+            ],
         )
 
     async def test_cors_no_origin(self):
@@ -77,28 +66,10 @@ class TestCORS(unittest.IsolatedAsyncioTestCase):
         async def run_app_with_scope(scope):
             await self.app(scope, None, send_mock)
 
-        scope = {
-            "type": "http",
-            "path": "/",
-            "method": "GET",
-            "headers": [],
-            "query_string": b"",
-        }
-
+        scope = make_scope()
         await run_app_with_scope(scope)
-        send_mock.assert_any_await(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"content-type", b"text/plain")],
-            }
-        )
-        send_mock.assert_any_await(
-            {
-                "type": "http.response.body",
-                "body": b"Hello, World!",
-            }
-        )
+
+        assert_status_code_with_response_body(send_mock, 200, b"Hello, World!")
 
     async def test_cors_not_allowed_origin(self):
         send_mock = AsyncMock()
@@ -106,26 +77,7 @@ class TestCORS(unittest.IsolatedAsyncioTestCase):
         async def run_app_with_scope(scope):
             await self.app(scope, None, send_mock)
 
-        scope = {
-            "type": "http",
-            "path": "/",
-            "method": "GET",
-            "headers": [(b"origin", b"https://notallowed.com")],
-            "query_string": b"",
-        }
-
+        scope = make_scope(headers=[(b"origin", b"https://notallowed.com")])
         await run_app_with_scope(scope)
 
-        send_mock.assert_any_await(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"content-type", b"text/plain")],
-            }
-        )
-        send_mock.assert_any_await(
-            {
-                "type": "http.response.body",
-                "body": b"Hello, World!",
-            }
-        )
+        assert_status_code_with_response_body(send_mock, 200, b"Hello, World!")
