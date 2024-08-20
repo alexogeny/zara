@@ -21,13 +21,6 @@ jobs:
           RYE_VERSION: "0.37.0"
           RYE_INSTALL_OPTION: "--yes"
 
-      - name: Install GitHub CLI
-        run: |
-          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
-          sudo apt-add-repository https://cli.github.com/packages
-          sudo apt update
-          sudo apt install gh
-
       - name: Generate Release Notes
         run: |
           sudo apt-get install python3-pip
@@ -36,7 +29,18 @@ jobs:
       - name: Create GitHub Release
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          gh release create $VERSION --notes-file RELEASE_NOTES.md
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "tag_name": "'"$VERSION"'",
+              "target_commitish": "'"$GITHUB_SHA"'",
+              "name": "'"$VERSION"'",
+              "body": "'"$(cat RELEASE_NOTES.md)"'",
+              "draft": false,
+              "prerelease": false
+            }' \
+            https://api.github.com/repos/${{ github.repository }}/releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
