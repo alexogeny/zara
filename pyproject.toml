@@ -1,6 +1,6 @@
 [project]
 name = "zara"
-version = "v0.1.0"
+version = "v0.2.0"
 description = "An elegant batteries-included web framework for python."
 authors = [
     { name = "alexogeny", email = "6896115+alexogeny@users.noreply.github.com" }
