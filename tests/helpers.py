@@ -1,7 +1,27 @@
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock
 
 from zara.server.router import Router
 from zara.server.server import SimpleASGIApp
+from zara.server.validation import BaseValidator, validate
+
+
+@dataclass
+class RegisterValidator(BaseValidator):
+    receive_marketing: bool
+    email: Optional[str] = None
+
+    def validate(self) -> List[Dict[str, Any]]:
+        errors = []
+        if self.receive_marketing and not self.email:
+            errors.append(
+                {
+                    "field": "email",
+                    "message": "Email is required when receiving marketing communications.",
+                }
+            )
+        return errors
 
 
 def assert_status_code_with_response_body(
@@ -58,6 +78,14 @@ async def async_ratelimited(request):
     }
 
 
+async def async_register(request):
+    return {
+        "status": 200,
+        "headers": [(b"content-type", b"text/plain")],
+        "body": b"Registered!",
+    }
+
+
 def make_test_app(**kwargs):
     app = SimpleASGIApp(**kwargs)
     app.rate_limit = (3, 5)
@@ -90,5 +118,10 @@ def make_test_app(**kwargs):
     @router_two.get("/rate-limited-server")
     async def rate_limited_server(request):
         return await async_ratelimited(request)
+
+    @router.get("/register")
+    @validate(query=RegisterValidator)
+    async def register(request):
+        return await async_register(request)
 
     return app
