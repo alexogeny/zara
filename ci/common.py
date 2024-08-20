@@ -8,12 +8,15 @@ Suffix = Union[Literal["alpha"], Literal["beta"], None]
 
 
 def get_last_version():
-    result = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0"], stdout=subprocess.PIPE, text=True
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
+    try:
+        last_version = (
+            subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"])
+            .strip()
+            .decode()
+        )
+    except subprocess.CalledProcessError:
+        last_version = "v0.1.0"
+    return last_version
 
 
 def get_commits_since_last_version(last_version: LastVersion):
