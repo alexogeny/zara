@@ -26,11 +26,13 @@ def get_commits_since_last_version(last_version: LastVersion):
             stdout=subprocess.PIPE,
             text=True,
         )
+        print(result)
     else:
         # If no last version, get all commits
         result = subprocess.run(
             ["git", "log", "--pretty=format:%s"], stdout=subprocess.PIPE, text=True
         )
+        print(result)
     return result.stdout.strip().split("\n")
 
 
