@@ -15,16 +15,9 @@ def quit(message):
 
 
 def main():
-    try:
-        last_version = get_last_version()
-    except subprocess.CalledProcessError:
-        last_version = None
-
+    last_version = get_last_version()
     commits = get_commits_since_last_version(last_version)
-    if not commits:
-        quit("No conventional commits found. Cya!")
-
-    next_version = determine_next_version(last_version or "0.0.0", commits)
+    next_version = determine_next_version(last_version, commits)
     if next_version == "noop":
         quit("No conventional commits found. Cya!")
 

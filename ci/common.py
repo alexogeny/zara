@@ -15,7 +15,7 @@ def get_last_version():
             .decode()
         )
     except subprocess.CalledProcessError:
-        last_version = "v0.1.0"
+        last_version = None
     return last_version
 
 
