@@ -16,8 +16,11 @@ def quit(message):
 
 def main():
     last_version = get_last_version()
+    print(last_version)
     commits = get_commits_since_last_version(last_version)
+    print(commits)
     next_version = determine_next_version(last_version, commits)
+    print(next_version)
     if next_version == "noop":
         quit("No conventional commits found. Cya!")
 
