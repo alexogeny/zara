@@ -10,6 +10,8 @@
 #   universal: false
 
 -e file:.
+aiosqlite==0.20.0
+    # via zara
 argon2-cffi==23.1.0
     # via zara
 argon2-cffi-bindings==21.2.0
@@ -34,6 +36,7 @@ pycparser==2.22
 sqlalchemy==2.0.31
     # via zara
 typing-extensions==4.12.2
+    # via aiosqlite
     # via sqlalchemy
 uvicorn==0.30.6
     # via zara
