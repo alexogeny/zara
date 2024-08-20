@@ -24,10 +24,7 @@ cffi==1.16.0
     # via zara
 click==8.1.7
     # via uvicorn
-    # via zara
 flake8==7.1.1
-greenlet==3.0.3
-    # via sqlalchemy
 h11==0.14.0
     # via uvicorn
 iniconfig==2.0.0
@@ -52,10 +49,7 @@ pyflakes==3.2.0
 pyright==1.1.376
 pytest==8.3.2
 ruff==0.6.1
-sqlalchemy==2.0.31
-    # via zara
 typing-extensions==4.12.2
     # via aiosqlite
-    # via sqlalchemy
 uvicorn==0.30.6
     # via zara
