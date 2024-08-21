@@ -130,6 +130,19 @@ class ORMBase:
 
         return row
 
+    @classmethod
+    async def all(cls):
+        conn = await cls.get_connection()
+        query = f"SELECT * FROM {cls._table_name}"
+
+        if cls._db_type == "sqlite":
+            cursor = conn.execute(query)
+            rows = cursor.fetchall()
+        else:
+            rows = await conn.fetch(query)
+
+        return rows
+
 
 class AutoIncrementInt:
     pass

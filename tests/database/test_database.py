@@ -29,6 +29,16 @@ class TestORM(unittest.TestCase):
         self.assertEqual(saved_person[0], 1)
         self.assertEqual(saved_person[1], "Test Hermione")
 
+    def test_get_all_peeople(self):
+        person = TestPerson(name="Test Hermione")
+        person_two = TestPerson(name="Test Ronaldo")
+        asyncio.run(self.save_entity(person))
+        asyncio.run(self.save_entity(person_two))
+        saved_people = asyncio.run(TestPerson.all())
+        self.assertIsNotNone(saved_people, "People should be saved and retrievable")
+        names = [p[1] for p in saved_people]
+        self.assertEqual(sorted(names), ["Test Hermione", "Test Ronaldo"])
+
 
 class TestPerson(ORMBase):
     _table_name = "test_person"
