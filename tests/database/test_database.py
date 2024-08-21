@@ -24,20 +24,10 @@ class TestORM(unittest.TestCase):
         person = TestPerson(name="Test Hermione")
         asyncio.run(self.save_entity(person))
 
-        saved_person = asyncio.run(self.get_person_by_name("Test Hermione"))
+        saved_person = asyncio.run(TestPerson.get(name="Test Hermione"))
         self.assertIsNotNone(saved_person, "Person should be saved and retrievable")
         self.assertEqual(saved_person[0], 1)
         self.assertEqual(saved_person[1], "Test Hermione")
-
-    async def get_person_by_name(self, name):
-        query = "SELECT * FROM test_person WHERE name = ?"
-        conn = await ORMBase.get_connection()
-        if ORMBase._db_type == "asyncpg":
-            row = await conn.fetchrow(query, name)
-        else:
-            cursor = conn.execute(query, (name,))
-            row = cursor.fetchone()
-        return row
 
 
 class TestPerson(ORMBase):

@@ -113,6 +113,23 @@ class ORMBase:
         else:
             await conn.execute(query)
 
+    @classmethod
+    async def get(cls, **filters):
+        conn = await cls.get_connection()
+
+        where_clause = " AND ".join([f"{key} = ?" for key in filters.keys()])
+        query = f"SELECT * FROM {cls._table_name} WHERE {where_clause}"
+
+        values = tuple(filters.values())
+
+        if cls._db_type == "sqlite":
+            cursor = conn.execute(query, values)
+            row = cursor.fetchone()
+        else:
+            row = await conn.fetchrow(query, *values)
+
+        return row
+
 
 class AutoIncrementInt:
     pass
