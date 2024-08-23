@@ -1,8 +1,10 @@
 from http import HTTPStatus
+import urllib.parse
 from typing import Any, Awaitable, Callable, Dict, List
 
 from zara.config.config import Config
 from zara.server.router import Router
+from zara.server.translation import I18n
 from zara.types.asgi import ASGI, Receive, Scope, Send
 from zara.types.http import Http, send_http_error
 
@@ -20,12 +22,14 @@ class SimpleASGIApp:
         self._config = None
         self._raw_config = config
         self.rate_limit = (100, 60)  # 100 requests every 60 seconds
+        self._translations = {}
+        self._i18n = I18n(self)
 
     def add_router(self, router: Router) -> None:
         self.routers.append(router)
         router.app = self
 
-    @property
+    @cached_property
     def config(self):
         if self._config is None:
             if self._raw_config is not None:
@@ -33,6 +37,16 @@ class SimpleASGIApp:
             else:
                 self._config = Config("config.ini")
         return self._config
+
+    @cached_property
+    def routers_with_root_last(self) -> list[Router]:
+        non_root, root = [], []
+        for router in self.routers:
+            if router.name:
+                non_root.append(router)
+            else:
+                root = [router]
+        return non_root + root
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         asgi = ASGI(scope, receive, send, self.config)
@@ -46,18 +60,21 @@ class SimpleASGIApp:
             "method": method,
             "path": path,
             "headers": headers,
-            "query_string": asgi.scope["query_string"],
+            "params": {
+                k: v[0] for k, v in urllib.parse.parse_qs(path.split("?")[1]).items()
+            }
+            if "?" in path
+            else {},
             "asgi": asgi,
             "error_was_raised": False,
+            "t": self._i18n.get_translator("en"),
         }
 
         for handler in self.before_request_handlers:
             await handler(request)
 
         response = None
-        non_root = [r for r in self.routers if r.name]
-        root = [r for r in self.routers if not r.name]
-        for router in non_root + root:
+        for router in self.routers_with_root_last:
             if not await router.match(asgi.scope["path"]):
                 continue
 

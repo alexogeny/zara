@@ -38,7 +38,13 @@ class Route:
         if self.router.name:
             prefix = f"/{self.router.name}"
 
-        if not asgi.scope["path"] == prefix + self.path:
+        path_to_match = (
+            asgi.scope["path"]
+            if "?" not in asgi.scope["path"]
+            else asgi.scope["path"].split("?")[0]
+        )
+
+        if not path_to_match == prefix + self.path:
             return False
 
         return True

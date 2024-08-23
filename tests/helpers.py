@@ -86,6 +86,19 @@ async def async_register(request):
     }
 
 
+async def async_translate(request):
+    t = request["t"]
+    return {
+        "status": 200,
+        "headers": [(b"content-type", b"text/plain")],
+        "body": t(
+            "messages.people.count",
+            request["params"]["count"],
+            amount_of_people=request["params"]["count"],
+        ).encode("utf-8"),
+    }
+
+
 def make_test_app(**kwargs):
     app = SimpleASGIApp(**kwargs)
     app.rate_limit = (3, 5)
@@ -98,6 +111,10 @@ def make_test_app(**kwargs):
     @router.get("/")
     async def hello_world(request):
         return await async_hello_world(request)
+
+    @router.get("/translated")
+    async def translated(request):
+        return await async_translate(request)
 
     @router.post("/goodbye")
     async def goodbye_world(request):
