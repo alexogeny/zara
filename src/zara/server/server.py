@@ -1,8 +1,18 @@
+from datetime import timedelta
+from functools import cached_property
 from http import HTTPStatus
 import urllib.parse
 from typing import Any, Awaitable, Callable, Dict, List
 
 from zara.config.config import Config
+from zara.server.events import (
+    BaseEventName,
+    EventBus,
+    ImmediateEvent,
+    Listener,
+    ScheduledEvent,
+    utcnow,
+)
 from zara.server.router import Router
 from zara.server.translation import I18n
 from zara.types.asgi import ASGI, Receive, Scope, Send
@@ -15,10 +25,7 @@ AsgiHandlerType = Callable[[Dict[str, Any]], Awaitable[None]]
 class SimpleASGIApp:
     def __init__(self, config=None) -> None:
         self.routers: list[Router] = []
-        self.before_request_handlers: List[AsgiHandlerType] = []
-        self.after_request_handlers: List[AsgiHandlerType] = []
-        self.startup_handlers: List[GenericHandlerType] = []
-        self.shutdown_handlers: List[GenericHandlerType] = []
+        self.event_bus = EventBus()
         self._config = None
         self._raw_config = config
         self.rate_limit = (100, 60)  # 100 requests every 60 seconds
@@ -70,8 +77,8 @@ class SimpleASGIApp:
             "t": self._i18n.get_translator("en"),
         }
 
-        for handler in self.before_request_handlers:
-            await handler(request)
+        event = ImmediateEvent(BaseEventName.BEFORE_REQUEST, request)
+        self.event_bus.emit(event)
 
         response = None
         for router in self.routers_with_root_last:
@@ -95,28 +102,31 @@ class SimpleASGIApp:
             )
             await asgi.send(Http.Response.Body(content=response["body"]))
 
-        for handler in self.after_request_handlers:
-            await handler(request)
+        event = ImmediateEvent(BaseEventName.AFTER_REQUEST, request)
+        self.event_bus.emit(event)
 
-    def add_before_request_handler(self, handler: AsgiHandlerType) -> None:
-        self.before_request_handlers.append(handler)
+    async def startup(self, load_function: Callable[[], List[Dict[str, Any]]]) -> None:
+        await self.event_bus.load_scheduled_events(load_function)
+        await self.event_bus.start()
+        startup_event = ImmediateEvent(BaseEventName.STARTUP)
+        self.event_bus.emit(startup_event)
 
-    def add_after_request_handler(self, handler: AsgiHandlerType) -> None:
-        self.after_request_handlers.append(handler)
+    async def shutdown(
+        self, save_function: Callable[[List[Dict[str, Any]]], None]
+    ) -> None:
+        shutdown_event = ImmediateEvent(BaseEventName.SHUTDOWN)
+        self.event_bus.emit(shutdown_event)
+        await self.event_bus.stop(save_function)
 
-    def add_startup_handler(self, handler: GenericHandlerType) -> None:
-        self.startup_handlers.append(handler)
+    def add_listener(self, listener: Listener) -> None:
+        self.event_bus.register_listener(listener)
 
-    def add_shutdown_handler(self, handler: GenericHandlerType) -> None:
-        self.shutdown_handlers.append(handler)
-
-    async def startup(self) -> None:
-        for handler in self.startup_handlers:
-            await handler()
-
-    async def shutdown(self) -> None:
-        for handler in self.shutdown_handlers:
-            await handler()
+    def schedule_event(
+        self, event_name: BaseEventName, data: Any, delay: timedelta
+    ) -> None:
+        trigger_time = utcnow() + delay
+        event = ScheduledEvent(event_name, data, trigger_time)
+        self.event_bus.schedule_event(event)
 
     async def _dispatch(
         self, send, path: str, request: Dict[str, Any]
