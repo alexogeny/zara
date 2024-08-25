@@ -1,7 +1,7 @@
+import urllib.parse
 from datetime import timedelta
 from functools import cached_property
 from http import HTTPStatus
-import urllib.parse
 from typing import Any, Awaitable, Callable, Dict, List
 
 from zara.config.config import Config
@@ -11,7 +11,7 @@ from zara.server.events import (
     ImmediateEvent,
     Listener,
     ScheduledEvent,
-    utcnow,
+    get_trigger_time,
 )
 from zara.server.router import Router
 from zara.server.translation import I18n
@@ -124,7 +124,7 @@ class SimpleASGIApp:
     def schedule_event(
         self, event_name: BaseEventName, data: Any, delay: timedelta
     ) -> None:
-        trigger_time = utcnow() + delay
+        trigger_time = get_trigger_time(delay)
         event = ScheduledEvent(event_name, data, trigger_time)
         self.event_bus.schedule_event(event)
 

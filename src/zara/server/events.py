@@ -1,8 +1,23 @@
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List
+
+
+def extend_enum(base_enum, new_members):
+    """
+    Function to create a new Enum that extends the base_enum with new members.
+    :param base_enum: The base enum class to extend.
+    :param new_members: A dictionary of new members to add.
+    :return: A new Enum class with combined members.
+    """
+    # Create a dictionary of combined members
+    combined_members = {member.name: member.value for member in base_enum}
+    combined_members.update(new_members)
+
+    # Create and return a new Enum class with the combined members
+    return Enum(base_enum.__name__, combined_members)
 
 
 class BaseEventName(Enum):
@@ -13,8 +28,8 @@ class BaseEventName(Enum):
     TIME_LIMIT_EXCEEDED = auto()
 
 
-def utcnow():
-    return datetime.now(tz=timezone.utc)
+def get_trigger_time(delay):
+    return datetime.now() + delay
 
 
 # Event base class
@@ -46,7 +61,7 @@ class ScheduledEvent(Event):
         self.trigger_time = trigger_time
 
     def is_due(self) -> bool:
-        return utcnow() >= self.trigger_time
+        return datetime.now() >= self.trigger_time
 
     def serialize(self) -> Dict[str, Any]:
         return {
@@ -117,9 +132,11 @@ class EventBus:
             self.process_scheduled_events()
 
             try:
-                event = await asyncio.wait_for(self.queue.get(), timeout=1.0)
+                event = await asyncio.wait_for(self.queue.get(), timeout=0.05)
             except asyncio.TimeoutError:
                 continue
+            except asyncio.CancelledError:
+                break
 
             for listener in self.listeners:
                 await listener.handle_event(event)
