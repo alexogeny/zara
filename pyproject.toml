@@ -27,8 +27,7 @@ classifiers = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.rye]
-managed = true
+[tool.uv]
 dev-dependencies = [
     "ruff>=0.6.1",
     "pyflakes>=3.2.0",
@@ -44,7 +43,7 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = ["src/zara"]
 
-[tool.rye.scripts]
+[tool.uv.scripts]
 example = { cmd = "uvicorn example:app --reload" }
 lint = {chain = ["lint-isort", "lint-ruff", "lint-flake8", "lint-pyright"]}
 lint-ruff = "ruff format ."
