@@ -1,0 +1,7 @@
+{
+  "validationErrors": {
+    "emailRequiredForMarketing": "Email is required when receiving marketing comms.",
+    "emailInvalid": "Please submit a valid email address.",
+    "nameMissing": "Name is required but was not provided."
+  }
+}

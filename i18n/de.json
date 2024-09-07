@@ -1,0 +1,7 @@
+{
+  "validationErrors": {
+    "emailRequiredForMarketing": "E-Mail ist für den Empfang von Marketingmitteilungen erforderlich.",
+    "emailInvalid": "Bitte geben Sie eine gültige E-Mail Adresse an.",
+    "nameMissing": "Der Name ist erforderlich, wird aber nicht angegeben."
+  }
+}
