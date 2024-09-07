@@ -5,8 +5,9 @@ import orjson
 
 from zara.application.events import Event, Listener
 from zara.application.translation import I18n
-from zara.errors import InternalServerError, ValidationError
-from zara.server.events import EventBus
+from zara.errors import AuthenticationError, InternalServerError, ValidationError
+
+from .events import EventBus
 
 
 class Request:
@@ -21,10 +22,33 @@ class Request:
         self._receive = receive
         self.t = t
         self._logger = logger
+        self.cookies = []
+        for name, value in self.parse_cookies().items():
+            self.set_cookie(name, value)
+
+    def parse_cookies(self):
+        """Helper to parse cookies from the 'Cookie' header."""
+        cookies = {}
+        cookie_header = self.headers.get(b"cookie", b"").decode("utf-8")
+        if cookie_header:
+            for cookie in cookie_header.split(";"):
+                name, value = cookie.strip().split("=")
+                cookies[name] = value
+        return cookies
 
     @property
     def logger(self):
         return self._logger
+
+    def set_cookie(
+        self, name, value, path="/", http_only=True, secure=True, same_site="Strict"
+    ):
+        """Helper function to set cookies in the response."""
+        matching = next((c for c in self.cookies if f"{name}=" in c), None)
+        if matching:
+            return
+        cookie = f"{name}={value}; Path={path}; HttpOnly={http_only}; Secure={secure}; SameSite={same_site}"
+        self.cookies.append(cookie)
 
     async def body(self) -> bytes:
         """Lazily load the body when requested."""
@@ -130,15 +154,19 @@ class ASGIApplication:
                         await self.send_400(send, data={"validation_errors": e.errors})
                         self._event_bus.dispatch_event(Event("AfterRequest", request))
                         return
-                    self.logger.debug(e)
-                await self.send_response(send, response)
+                    elif isinstance(e, AuthenticationError):
+                        await self.send_401(send)
+                        return
+                await self.send_response(
+                    send, response, set_cookies=request.cookies or []
+                )
                 self._event_bus.dispatch_event(Event("AfterRequest", request))
                 return
         await self.send_404(send, path=request.path)
         self._event_bus.dispatch_event(Event("AfterRequest", request))
         return
 
-    async def send_response(self, send: Callable, body: bytes):
+    async def send_response(self, send: Callable, body: bytes, set_cookies=[]):
         """Send the HTTP response with body content."""
         await send(
             {
@@ -147,7 +175,14 @@ class ASGIApplication:
                 "headers": [(b"content-type", b"text/plain")],
             }
         )
-        await send({"type": "http.response.body", "body": body, "more_body": False})
+        await send(
+            {
+                "type": "http.response.body",
+                "body": body,
+                "more_body": False,
+                "set_cookies": set_cookies,
+            }
+        )
 
     async def send_404(self, send: Callable, path="/"):
         """Send a 404 response when no route matches."""
@@ -156,6 +191,9 @@ class ASGIApplication:
 
     async def send_400(self, send: Callable, data="Bad Request"):
         await self.send_error(send, 400, data)
+
+    async def send_401(self, send: Callable):
+        await self.send_error(send, 401, "Unauthorized")
 
     async def send_error(self, send: Callable, status_code: int, detail: str):
         """Send an error response with the given status code and detail."""

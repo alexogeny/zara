@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 
+import orjson
 from httptools import HttpRequestParser
 
 from zara.application.application import ASGIApplication
@@ -52,10 +53,22 @@ class ASGISession:
 
         elif event["type"] == "http.response.body":
             body = event.get("body", b"")
+            # Detect if the body is not a byte string and handle encoding
+            if not isinstance(body, bytes):
+                if isinstance(body, (dict, list)):
+                    # Encode dict or list to JSON using orjson
+                    body = orjson.dumps(body)
+                else:
+                    # Convert other types to string and then to bytes
+                    body = str(body).encode("utf-8")
             self.response.body = body
             content_length = len(body)
             if self.cached_start_event is not None:
                 headers = self.cached_start_event.get("headers", [])
+                self.app.logger.debug(event)
+                for cookie in event.get("set_cookies", []):
+                    self.app.logger.debug(cookie)
+                    headers.append((b"set-cookie", cookie.encode("utf-8")))
                 headers.append((b"content-length", str(content_length).encode("utf-8")))
                 self.cached_start_event["headers"] = headers
                 await self.loop.sock_sendall(

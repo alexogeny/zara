@@ -2,11 +2,19 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from zara.application.application import ASGIApplication, Request, Router
-from zara.application.authentication import auth_required, get_keycloak_token
+from zara.application.authentication import auth_required
 from zara.application.events import Event
 from zara.application.validation import Required, check_required_fields, validate
 from zara.asgi.server import ASGIServer
+from zara.errors import UnauthenticatedError
 from zara.server.validation import BaseValidator
+from zara.utilities.jwt_encode_decode import get_keycloak_token
+
+SECRET_KEY = "your_application_secret"
+ALGORITHM = "HS256"
+CLIENT_ID = "local"
+CLIENT_SECRET = "I3EUXRwR1W1fSz2ZYy7XZOnmKSn7uruK"  # If necessary
+REDIRECT_URI = "http://localhost:8000/callback"
 
 app = ASGIApplication()
 
@@ -74,29 +82,37 @@ async def login(request: Request):
     request.logger.debug(data)
     username = data.get("username")
     password = data.get("password")
-
+    # TODO: user table should delineate users that have OID connected in each schema
+    internal_user = username != "internal_user"
     request.logger.debug(f"{username} username, {password} password")
 
     if not username or not password:
         return {"error": "Username and password are required"}, 400
 
+    config = None
+    if not internal_user:
+        config = {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "redirect_uri": REDIRECT_URI,
+            "token_url": "http://localhost:8080/realms/master/protocol/openid-connect/token",
+        }
+
     try:
-        # Fetch token from Keycloak
-        token_response = await get_keycloak_token(username, password)
+        request.logger.debug(f"is internal: {internal_user}")
+        token_response = await get_keycloak_token(
+            username, password, endpoint_config=config
+        )
         request.logger.debug(token_response)
         if "error" in token_response:
             return {"error": token_response["error_description"]}, 401
-
-        # Return the access token (JWT)
-        return {
-            "access_token": token_response["access_token"],
-            "refresh_token": token_response.get(
-                "refresh_token"
-            ),  # If you want to use refresh tokens
-            "token_type": token_response["token_type"],
-        }
+        request.set_cookie("refreshToken", token_response["refresh_token"])
+        return {"access_token": token_response["access_token"], "token_type": "Bearer"}
     except Exception as e:
-        return str(e).encode("utf-8")
+        if "401" in str(e):
+            raise UnauthenticatedError()
+        else:
+            request.logger.error(e)
 
 
 @router_two.get("/greet")

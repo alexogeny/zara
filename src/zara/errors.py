@@ -4,11 +4,11 @@ class InternalServerError(Exception):
     pass
 
 
-class UnauthorizedError(Exception):
+class AuthenticationError(Exception):
     pass
 
 
-class UnauthenticatedError(UnauthorizedError):
+class UnauthenticatedError(AuthenticationError):
     pass
 
 
