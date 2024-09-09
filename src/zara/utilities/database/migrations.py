@@ -96,7 +96,6 @@ class SchemaGenerator:
             elif isinstance(field_type, PrimaryKey):
                 field_lines.append(f"    {field_name} PRIMARY KEY")
             elif isinstance(field_type, HasOne):
-                print(self.models)
                 matching_model = next(
                     (m for m in self.models if m.__name__ == field_type.related_model),
                     None,

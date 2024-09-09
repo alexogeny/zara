@@ -2,18 +2,27 @@
 
 from zara.utilities.database.base import Model
 from zara.utilities.database.fields import (
-    AutoIncrement,
     HasMany,
-    Optional,
-    PrimaryKey,
-    Required,
 )
-from zara.utilities.database.mixins import MetaMixin, SoftDeleteMixin
+from zara.utilities.database.mixins import (
+    PermissionMixin,
+    RoleMixin,
+    SettingsMixin,
+    UserMixin,
+)
 
 
-class User(Model, MetaMixin, SoftDeleteMixin):
-    id: AutoIncrement[PrimaryKey] = AutoIncrement()
-    name: Required[str] = None
-    email: Optional[str] = None
-
+class User(Model, UserMixin):
     pets: HasMany["Pet"] = HasMany["Pet"]  # type: ignore  # noqa: F821
+
+
+class Settings(Model, SettingsMixin):
+    pass
+
+
+class Role(Model, RoleMixin):
+    pass
+
+
+class Permission(Model, PermissionMixin):
+    pass

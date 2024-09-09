@@ -3,28 +3,16 @@ import datetime
 
 from zara.utilities.database.base import Model
 from zara.utilities.database.fields import (
-    AutoIncrement,
     Default,
     HasMany,
     HasOne,
     Optional,
-    PrimaryKey,
     Required,
 )
+from zara.utilities.database.mixins import AuditMixin
 
 
-class MetaMixin:
-    created_at: Required[datetime.datetime] = Default(
-        datetime.datetime.now(tz=datetime.timezone.utc)
-    )
-
-
-class SoftDeleteMixin:
-    deleted_at: Optional[datetime.datetime] = None
-
-
-class Pet(Model, MetaMixin, SoftDeleteMixin):
-    id: AutoIncrement[PrimaryKey] = AutoIncrement()
+class Pet(Model, AuditMixin):
     name: Required[str] = None
     species: Optional[str] = "Dog"
     breed: Optional[str] = None

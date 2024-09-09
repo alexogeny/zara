@@ -1,9 +1,21 @@
+"""
+The main goal of these mixins are to define most of what you need to get started.
+"""
+
 from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING
 
-from .fields import Default, HasOne, Optional, Required
+from .fields import (
+    AutoIncrement,
+    Default,
+    HasMany,
+    HasOne,
+    Optional,
+    PrimaryKey,
+    Required,
+)
 
 if TYPE_CHECKING:
 
@@ -11,16 +23,104 @@ if TYPE_CHECKING:
         def _get_table_name():
             return "user"
 
+    class Settings:
+        pass
 
-class MetaMixin:
+    class Permission:
+        pass
+
+    class Role:
+        pass
+
+    class RolePermission:
+        pass
+
+    class OpenIDProvider:
+        pass
+
+
+class AuditMixin:
+    id: AutoIncrement[PrimaryKey] = AutoIncrement()
+
     created_at: Required[datetime.datetime] = Default(
         datetime.datetime.now(tz=datetime.timezone.utc)
     )
     created_by: HasOne["User"] = HasOne["User"]
     updated_at: Optional[datetime.datetime] = None
     updated_by: HasOne["User"] = HasOne["User"]
-
-
-class SoftDeleteMixin:
     deleted_at: Optional[datetime.datetime] = None
     deleted_by: HasOne["User"] = HasOne["User"]
+
+
+class SettingsMixin(AuditMixin):
+    """Some basic settings to get started."""
+
+    user: HasOne["User"] = HasOne["User"]
+    display_mode: Optional[str] = Default("system")  # light, dark, system, hi contrast
+    language: Optional[str] = "a language code e.g. en_AU or de"
+    theme: Optional[str] = "a theme, like blue or red"
+    timezone: Optional[str] = "a timezone."
+    reduced_motion: Optional[str] = Default("system")
+    receive_email_notifications: Optional[bool] = Default(False)
+    receive_text_notifications: Optional[bool] = Default(False)
+    has_opted_out_of_marketing: Optional[bool] = Default(False)
+
+
+class UserMixin(AuditMixin):
+    """Common properties you'd find on a user object."""
+
+    password_hash: Optional[str] = None
+    password_salt: Optional[str] = None
+    recovery_codes: Optional[str] = None
+    mfa_secret: Optional[str] = None
+    email_address: Required[str] = None
+    age: Optional[int] = Default(0)
+    name: Required[str] = None
+    username: Required[str] = None
+    settings: HasOne["Settings"] = HasOne["Settings"]
+    is_admin: Optional[bool] = Default(False)
+    is_system: Optional[bool] = Default(False)
+    role: HasOne["Role"] = HasOne["Role"]
+    openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
+
+
+class SessionMixin:
+    user: HasOne["User"] = HasOne["User"]
+    access_token = None
+    refresh_token = None
+    expires_at: Optional[datetime.datetime] = None
+    last_active: Optional[datetime.datetime] = None
+
+
+class RoleMixin:
+    """Role-based access control that has a defined subset of permissions."""
+
+    name: Required[str] = None
+    is_custom: Optional[bool] = Default(False)
+    description: Required[str] = None
+    role_permissions: HasMany["RolePermission"] = HasMany["RolePermission"]
+
+
+class PermissionMixin:
+    """Permissions that form part of role-based access."""
+
+    name: Required[str] = None
+    slug: Required[str] = None
+    is_custom: Optional[bool] = Default(False)
+    description: Required[str] = None
+    role_permissions: HasMany["RolePermission"] = HasMany["RolePermission"]
+
+
+class RolePermissionMixin:
+    """Map table for linking roles and permissions."""
+
+    role: HasOne["Role"] = HasOne["Role"]
+    permission: HasOne["Permission"] = HasOne["Permission"]
+
+
+class OpenIDProvidersMixin(AuditMixin):
+    client_id: Required[str] = None
+    client_secret: Required[str] = None
+    redirect_uri: Optional[str] = None
+
+    users: HasMany["User"] = HasMany["User"]
