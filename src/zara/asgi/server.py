@@ -6,6 +6,7 @@ from typing import Callable
 import uvloop
 
 from zara.application.events import Event, EventBus
+from zara.utilities.dotenv import env
 from zara.utilities.file_monitor import FileMonitor
 from zara.utilities.logger import setup_logger
 
@@ -13,10 +14,10 @@ from .session import ASGISession
 
 
 class ASGIServer:
-    def __init__(self, app: Callable, host: str = "127.0.0.1", port: int = 8000):
+    def __init__(self, app: Callable):
         self.app = app
-        self.host = host
-        self.port = port
+        self.host = env.get("HOST", default="127.0.0.1")
+        self.port = env.get("PORT", default=5000, cast_type=int)
         self.loop = uvloop.new_event_loop()
         self.server_socket = None
         self.file_monitor = FileMonitor("src")

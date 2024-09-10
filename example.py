@@ -140,5 +140,5 @@ async def on_scheduled_event(event: Event):
 app.add_listener("OnScheduledEvent", on_scheduled_event)
 
 
-server = ASGIServer(app, "127.0.0.1", 5000)
+server = ASGIServer(app)
 server.run()
