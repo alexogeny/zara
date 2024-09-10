@@ -5,6 +5,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from logging import FileHandler, StreamHandler
 
+from .dotenv import env
+
 
 class AsyncHTTPRequestHandler(logging.Handler):
     def __init__(self, url, loop=None):
@@ -59,6 +61,11 @@ class CustomFormatter(logging.Formatter):
 
 async def setup_logger(name, log_file=None, url=None, level=logging.INFO):
     logger = logging.getLogger(name)
+    debug = env.get("DEBUG", default=False, cast_type=bool)
+    if debug is False and level == logging.DEBUG:
+        level = logging.INFO
+    elif debug is True:
+        level = logging.DEBUG
     logger.setLevel(level)
 
     # Console handler with custom formatting
