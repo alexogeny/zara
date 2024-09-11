@@ -39,7 +39,6 @@ class Model:
                         and not isinstance(value, HasMany)
                     ):
                         if isinstance(getattr(base, key), Default):
-                            #     print(cls.__dict__)
                             if cls.__name__ not in DEFAULTS:
                                 DEFAULTS[cls.__name__] = {}
                             DEFAULTS[cls.__name__][key] = getattr(base, key)
@@ -58,15 +57,19 @@ class Model:
     async def create(self, db):
         """Insert a new record in the database using the provided db context."""
         fields = self._get_fields()
-        columns = ", ".join(fields.keys())
-        placeholders = ", ".join([f"${i+1}" for i in range(len(fields))])
-        values = tuple(self._values.get(field) for field in fields.keys())
+        columns = ", ".join(field for field in fields.keys() if field != "id")
+        placeholders = ", ".join([f"${i+1}" for i in range(len(fields) - 1)])
+        values = tuple(
+            self._values.get(field) for field in fields.keys() if field != "id"
+        )
         query = f"INSERT INTO {self._get_table_name()} ({columns}) VALUES ({placeholders}) RETURNING id;"
+
         result = await self._execute(db, query, values)
         if db.backend == "postgresql":
             self._values["id"] = result[0]["id"]
         else:
             self._values["id"] = result[0][0]
+
         return self
 
     async def save(self, db):

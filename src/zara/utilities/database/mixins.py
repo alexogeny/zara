@@ -19,9 +19,8 @@ from .fields import (
 
 if TYPE_CHECKING:
 
-    class User:
-        def _get_table_name():
-            return "user"
+    class Users:
+        pass
 
     class Settings:
         pass
@@ -43,19 +42,19 @@ class AuditMixin:
     id: AutoIncrement[PrimaryKey] = AutoIncrement()
 
     created_at: Required[datetime.datetime] = Default(
-        datetime.datetime.now(tz=datetime.timezone.utc)
+        datetime.datetime.now(tz=datetime.timezone.utc).replace(tzinfo=None)
     )
-    created_by: HasOne["User"] = HasOne["User"]
+    created_by: HasOne["Users"] = HasOne["Users"]
     updated_at: Optional[datetime.datetime] = None
-    updated_by: HasOne["User"] = HasOne["User"]
+    updated_by: HasOne["Users"] = HasOne["Users"]
     deleted_at: Optional[datetime.datetime] = None
-    deleted_by: HasOne["User"] = HasOne["User"]
+    deleted_by: HasOne["Users"] = HasOne["Users"]
 
 
 class SettingsMixin(AuditMixin):
     """Some basic settings to get started."""
 
-    user: HasOne["User"] = HasOne["User"]
+    user: HasOne["Users"] = HasOne["Users"]
     display_mode: Optional[str] = Default("system")  # light, dark, system, hi contrast
     language: Optional[str] = "a language code e.g. en_AU or de"
     theme: Optional[str] = "a theme, like blue or red"
@@ -66,7 +65,7 @@ class SettingsMixin(AuditMixin):
     has_opted_out_of_marketing: Optional[bool] = Default(False)
 
 
-class UserMixin(AuditMixin):
+class UsersMixin(AuditMixin):
     """Common properties you'd find on a user object."""
 
     password_hash: Optional[str] = None
@@ -77,15 +76,15 @@ class UserMixin(AuditMixin):
     age: Optional[int] = Default(0)
     name: Required[str] = None
     username: Required[str] = None
-    settings: HasOne["Settings"] = HasOne["Settings"]
+    # settings: HasOne["Settings"] = HasOne["Settings"]
     is_admin: Optional[bool] = Default(False)
     is_system: Optional[bool] = Default(False)
-    role: HasOne["Role"] = HasOne["Role"]
-    openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
+    # role: HasOne["Role"] = HasOne["Role"]
+    # openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
 
 
 class SessionMixin:
-    user: HasOne["User"] = HasOne["User"]
+    user: HasOne["Users"] = HasOne["Users"]
     access_token = None
     refresh_token = None
     expires_at: Optional[datetime.datetime] = None
@@ -123,4 +122,4 @@ class OpenIDProvidersMixin(AuditMixin):
     client_secret: Required[str] = None
     redirect_uri: Optional[str] = None
 
-    users: HasMany["User"] = HasMany["User"]
+    users: HasMany["Users"] = HasMany["Users"]

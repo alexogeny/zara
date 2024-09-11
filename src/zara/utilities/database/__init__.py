@@ -2,6 +2,7 @@ import aiosqlite
 import asyncpg
 
 from zara.utilities.database.migrations import MigrationManager
+from zara.utilities.dotenv import env
 
 
 class AsyncDatabase:
@@ -9,6 +10,9 @@ class AsyncDatabase:
         self.db_name = db_name
         self.backend = backend
         self.connection = None
+        self.db_url = env.get(
+            "DATABASE_URL", default="postgresql://user:password@localhost/dbname"
+        )
 
     async def connect(self):
         """Establish the connection to the database."""
@@ -16,14 +20,17 @@ class AsyncDatabase:
             self.connection = await aiosqlite.connect(f"{self.db_name}.db")
             await self._ensure_sqlite_file_exists()
         elif self.backend == "postgresql":
-            self.connection = await asyncpg.connect(
-                "postgresql://user:password@localhost/dbname"
-            )
+            self.connection = await asyncpg.connect(self.db_url)
             await self._ensure_schema_exists()
             await self.connection.execute(f"SET search_path TO {self.db_name};")
         else:
             raise ValueError(f"Unsupported backend: {self.backend}")
         await MigrationManager().apply_pending_migrations(self)
+
+    async def _create_psql_public_databases(self):
+        await self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS public.databases (schema_name TEXT PRIMARY KEY);"
+        )
 
     async def _ensure_schema_exists(self):
         """Ensures that the schema exists in PostgreSQL, and if not, creates it."""
@@ -34,6 +41,7 @@ class AsyncDatabase:
             await self.connection.execute(
                 f"CREATE SCHEMA IF NOT EXISTS {self.db_name};"
             )
+            await self._create_psql_public_databases()
             await self.connection.execute(
                 "INSERT INTO public.databases (schema_name) VALUES ($1)", self.db_name
             )

@@ -145,26 +145,33 @@ class ASGIApplication:
                 try:
                     response = await handler(request)
                 except Exception as e:
-                    if isinstance(e, InternalServerError):
-                        self.logger.error(str(e))
-                        await self.send_500(send)
-                        self._event_bus.dispatch_event(Event("AfterRequest", request))
-                        return
-                    elif isinstance(e, ValidationError):
-                        await self.send_400(send, data={"validation_errors": e.errors})
-                        self._event_bus.dispatch_event(Event("AfterRequest", request))
-                        return
-                    elif isinstance(e, AuthenticationError):
-                        await self.send_401(send)
-                        return
-                await self.send_response(
-                    send, response, set_cookies=request.cookies or []
-                )
-                self._event_bus.dispatch_event(Event("AfterRequest", request))
-                return
+                    await self.handle_exception(e, request, send)
+                    return
+
+                try:
+                    await self.send_response(
+                        send, response, set_cookies=request.cookies or []
+                    )
+                    self._event_bus.dispatch_event(Event("AfterRequest", request))
+                    return
+                except UnboundLocalError as e:
+                    await self.send_500(send)
+                    self.logger.error(str(e))
+                    self._event_bus.dispatch_event(Event("AfterRequest", request))
+                    return
         await self.send_404(send, path=request.path)
         self._event_bus.dispatch_event(Event("AfterRequest", request))
         return
+
+    async def handle_exception(self, e, request, send):
+        if isinstance(e, InternalServerError):
+            self.logger.error(str(e))
+            await self.send_500(send)
+        elif isinstance(e, ValidationError):
+            await self.send_400(send, data={"validation_errors": e.errors})
+        elif isinstance(e, AuthenticationError):
+            await self.send_401(send)
+        self._event_bus.dispatch_event(Event("AfterRequest", request))
 
     async def send_response(self, send: Callable, body: bytes, set_cookies=[]):
         """Send the HTTP response with body content."""

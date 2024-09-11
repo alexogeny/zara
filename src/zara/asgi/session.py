@@ -69,8 +69,13 @@ class ASGISession:
                 for cookie in event.get("set_cookies", []):
                     self.app.logger.debug(cookie)
                     headers.append((b"set-cookie", cookie.encode("utf-8")))
-                headers.append((b"content-length", str(content_length).encode("utf-8")))
+
+                # Check if 'content-length' header is already present
+                if not any(header[0] == b"content-length" for header in headers):
+                    headers.append((b"content-length", str(content_length).encode("utf-8")))
+
                 self.cached_start_event["headers"] = headers
+                self.app.logger.warning(headers)
                 await self.loop.sock_sendall(
                     self.client_socket, self.response.to_http(self.cached_start_event)
                 )

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from example_models.users_model import Users
 from zara.application.application import ASGIApplication, Request, Router
 from zara.application.authentication import auth_required
 from zara.application.events import Event
@@ -8,6 +9,8 @@ from zara.application.validation import Required, check_required_fields, validat
 from zara.asgi.server import ASGIServer
 from zara.errors import UnauthenticatedError
 from zara.server.validation import BaseValidator
+from zara.utilities.database import AsyncDatabase
+from zara.utilities.dotenv import env
 from zara.utilities.jwt_encode_decode import get_keycloak_token
 
 SECRET_KEY = "your_application_secret"
@@ -21,6 +24,7 @@ app = ASGIApplication()
 router = Router()
 
 
+# testing hot reload in doc
 @dataclass
 class RegisterValidator(BaseValidator):
     name: Required[str] = None
@@ -60,7 +64,15 @@ app.add_router(router)
 
 @router.get("/")
 async def hello_world(request: Request):
-    return b"Hello, World!"
+    request.logger.warning(env.get("DATABASE_URL"))
+    database = AsyncDatabase
+    async with database("acme_corp", backend="postgresql") as db:
+        try:
+            user = await Users(name="John Smith", username="johnsmith", email_address="john@smith.site").create(db)
+        except Exception as e:
+            request.logger.error(str(e))
+        print(f"Created user: {user}")
+    return b"Hello, World! I just changed this file"
 
 
 @router.post("/validate")

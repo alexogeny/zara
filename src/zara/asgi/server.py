@@ -16,7 +16,7 @@ from .session import ASGISession
 class ASGIServer:
     def __init__(self, app: Callable):
         self.app = app
-        self.host = env.get("HOST", default="127.0.0.1")
+        self.host = env.get("HOST", default="0.0.0.0")
         self.port = env.get("PORT", default=5000, cast_type=int)
         self.loop = uvloop.new_event_loop()
         self.server_socket = None

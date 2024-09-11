@@ -22,7 +22,7 @@ from .sqllex import AlterTable, DropTable, compare_sql_statements, parse_sql_sta
 def translate_pgsql_to_sqlite(query):
     return query.replace(
         "SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT"
-    ).replace("TIMESTAMPTZ", "TEXT")
+    ).replace("TIMESTAMP", "TEXT")
 
 
 class SchemaGenerator:
@@ -125,7 +125,7 @@ class SchemaGenerator:
         elif python_type is None:
             return None
         elif python_type is datetime.datetime:
-            return "TIMESTAMPTZ"
+            return "TIMESTAMP"
         else:
             raise ValueError(f"Unsupported type: {python_type}")
 
@@ -274,25 +274,27 @@ class MigrationManager:
             print(statement)
             if isinstance(statement, AlterTable):
                 if statement.constraint and statement.parent_table:
-                    temp = await db.connection.execute(
-                        f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{statement.table_name}';"
-                    )
-                    table_sql = await temp.fetchone()
-                    table_sql = (
-                        table_sql[0][:-2]
-                        + f",\n    FOREIGN KEY ({statement.column}) REFERENCES {statement.parent_table}({statement.parent_field})\n);"
-                    )
-                    print(table_sql)
+                    try:
+                        await db.connection.execute(statement.raw)
+                    except sqlite3.OperationalError as e:
+                        temp = await db.connection.execute(
+                            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{statement.table_name}';"
+                        )
+                        table_sql = await temp.fetchone()
+                        table_sql = (
+                            table_sql[0][:-2]
+                            + f",\n    FOREIGN KEY ({statement.column}) REFERENCES {statement.parent_table}({statement.parent_field})\n);"
+                        )
 
-                    await db.connection.execute(
-                        f"CREATE TEMPORARY TABLE temporary AS SELECT * FROM {statement.table_name};"
-                    )
-                    await db.connection.execute(f"DROP TABLE {statement.table_name};")
-                    await db.connection.execute(table_sql)
-                    await db.connection.execute(
-                        f"INSERT INTO {statement.table_name} SELECT * FROM temporary;"
-                    )
-                    await db.connection.execute("DROP TABLE temporary;")
+                        await db.connection.execute(
+                            f"CREATE TEMPORARY TABLE temporary AS SELECT * FROM {statement.table_name};"
+                        )
+                        await db.connection.execute(f"DROP TABLE {statement.table_name};")
+                        await db.connection.execute(table_sql)
+                        await db.connection.execute(
+                            f"INSERT INTO {statement.table_name} SELECT * FROM temporary;"
+                        )
+                        await db.connection.execute("DROP TABLE temporary;")
                 elif statement.operation.startswith(
                     "ADD"
                 ) or statement.operation.startswith("DROP"):
