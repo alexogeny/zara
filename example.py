@@ -68,11 +68,13 @@ async def hello_world(request: Request):
     database = AsyncDatabase
     async with database("acme_corp", backend="postgresql") as db:
         try:
-            user = await Users(name="John Smith", username="johnsmith", email_address="john@smith.site").create(db)
+            user = await Users(
+                name="John Smith", username="johnsmith", email_address="john@smith.site"
+            ).create(db)
         except Exception as e:
             request.logger.error(str(e))
         print(f"Created user: {user}")
-    return b"Hello, World! I just changed this file"
+    return b"Hello, World! I just changed this file. I'm adding some more text to the text to see if we compress any text. I'm adding a lot more text to this because my hope is that if I make a very very very long response then we might actually be able to see some real results here."
 
 
 @router.post("/validate")

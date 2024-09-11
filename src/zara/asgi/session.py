@@ -1,7 +1,11 @@
 import asyncio
-from typing import Any
+import gzip
+import io
+from typing import Any, Tuple
 
+import brotli
 import orjson
+import zstandard as zstd
 from httptools import HttpRequestParser
 
 from zara.application.application import ASGIApplication
@@ -46,8 +50,45 @@ class ASGISession:
         self.receive_event.clear()
         return self.request.to_event()
 
+    async def get_encoding(self):
+        """Find matching encoding from accept-encoding header tuple in self.request.headers."""
+        self.app.logger.warning(self.request.headers)
+        accept_encoding = next(
+            (h for h in self.request.headers if h[0] == b"Accept-Encoding"),
+            None,
+        )
+        self.app.logger.warning(accept_encoding)
+        if not accept_encoding:
+            return "plain"
+        encodings = accept_encoding[1].decode("utf-8").split(", ")
+        self.app.logger.warning(encodings)
+        if "zstd" in encodings:
+            return "zstd"
+        if "br" in encodings:
+            return "br"
+        if "gzip" in encodings:
+            return "gzip"
+        if "deflate" in encodings:
+            return "deflate"
+        return "plain"
+
+    def compress_response(self, body: bytes, encoding: str) -> Tuple[bytes, str]:
+        if encoding == "zstd":
+            return zstd.ZstdCompressor().compress(body), "zstd"
+        elif encoding == "br":
+            return brotli.compress(body), "br"
+        elif encoding == "gzip":
+            return gzip.compress(body), "gzip"
+        elif encoding == "deflate":
+            buf = io.BytesIO()
+            with gzip.GzipFile(fileobj=buf, mode="wb") as f:
+                f.write(body)
+            return buf.getvalue(), "deflate"
+        return body, "plain"
+
     async def send(self, event: dict):
         """ASGI send method to handle outgoing ASGI events."""
+
         if event["type"] == "http.response.start":
             self.cached_start_event = event
 
@@ -61,8 +102,15 @@ class ASGISession:
                 else:
                     # Convert other types to string and then to bytes
                     body = str(body).encode("utf-8")
-            self.response.body = body
-            content_length = len(body)
+
+            # Get preferred encoding
+            encoding = await self.get_encoding()
+            self.app.logger.warning(f"Using encoding {encoding}")
+            # Compress the response body based on the preferred encoding
+            compressed_body, content_encoding = self.compress_response(body, encoding)
+            self.response.body = compressed_body
+
+            content_length = len(compressed_body)
             if self.cached_start_event is not None:
                 headers = self.cached_start_event.get("headers", [])
                 self.app.logger.debug(event)
@@ -70,9 +118,13 @@ class ASGISession:
                     self.app.logger.debug(cookie)
                     headers.append((b"set-cookie", cookie.encode("utf-8")))
 
+                headers.append((b"content-encoding", content_encoding.encode("utf-8")))
+
                 # Check if 'content-length' header is already present
                 if not any(header[0] == b"content-length" for header in headers):
-                    headers.append((b"content-length", str(content_length).encode("utf-8")))
+                    headers.append(
+                        (b"content-length", str(content_length).encode("utf-8"))
+                    )
 
                 self.cached_start_event["headers"] = headers
                 self.app.logger.warning(headers)
