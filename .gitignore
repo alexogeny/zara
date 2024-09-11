@@ -11,3 +11,11 @@ wheels/
 
 # app
 config.ini
+
+**.log
+logs/
+
+scheduled_events.json
+
+migrations/
+**.sql
