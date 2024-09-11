@@ -52,16 +52,13 @@ class ASGISession:
 
     async def get_encoding(self):
         """Find matching encoding from accept-encoding header tuple in self.request.headers."""
-        self.app.logger.warning(self.request.headers)
         accept_encoding = next(
             (h for h in self.request.headers if h[0] == b"Accept-Encoding"),
             None,
         )
-        self.app.logger.warning(accept_encoding)
         if not accept_encoding:
             return "plain"
         encodings = accept_encoding[1].decode("utf-8").split(", ")
-        self.app.logger.warning(encodings)
         if "zstd" in encodings:
             return "zstd"
         if "br" in encodings:
@@ -86,57 +83,133 @@ class ASGISession:
             return buf.getvalue(), "deflate"
         return body, "plain"
 
+    def generate_csp(self):
+        """Generates a Content-Security-Policy header value based on the request headers.
+
+        Ends up with default, script, style, image, frame, form, block mixed and upgrade insecure."""
+        csp = {
+            "default-src": "'self'",
+            "script-src": "'self'",
+            "style-src": "'self'",
+            "img-src": "'self' data: https://trustedimages.example.com",
+            "frame-ancestors": "'self'",
+            "form-action": "'self'",
+            "block-all-mixed-content": "",
+            "upgrade-insecure-requests": "",
+        }
+        for header in self.request.headers:
+            if header[0] == b"Content-Security-Policy":
+                csp.update(header[1].decode("utf-8"))
+        return "; ".join([f"{k} {v}" for k, v in csp.items()])
+
+    def generate_hsts(self):
+        """Generates a Strict-Transport-Security header value based on the request headers."""
+        hsts = {
+            "max-age": 31536000,
+            "includeSubDomains": True,
+            "preload": True,
+        }
+        for header in self.request.headers:
+            if header[0] == b"Strict-Transport-Security":
+                hsts.update(header[1].decode("utf-8"))
+        return "; ".join([f"{k} {v}" for k, v in hsts.items()])
+
     async def send(self, event: dict):
         """ASGI send method to handle outgoing ASGI events."""
 
         if event["type"] == "http.response.start":
-            self.cached_start_event = event
+            self.cache_start_event(event)
 
         elif event["type"] == "http.response.body":
-            body = event.get("body", b"")
-            # Detect if the body is not a byte string and handle encoding
-            if not isinstance(body, bytes):
-                if isinstance(body, (dict, list)):
-                    # Encode dict or list to JSON using orjson
-                    body = orjson.dumps(body)
-                else:
-                    # Convert other types to string and then to bytes
-                    body = str(body).encode("utf-8")
+            await self.handle_response_body(event)
 
-            # Get preferred encoding
-            encoding = await self.get_encoding()
-            self.app.logger.warning(f"Using encoding {encoding}")
-            # Compress the response body based on the preferred encoding
-            compressed_body, content_encoding = self.compress_response(body, encoding)
-            self.response.body = compressed_body
+    def cache_start_event(self, event: dict):
+        """Cache the response start event."""
+        self.cached_start_event = event
 
-            content_length = len(compressed_body)
-            if self.cached_start_event is not None:
-                headers = self.cached_start_event.get("headers", [])
-                self.app.logger.debug(event)
-                for cookie in event.get("set_cookies", []):
-                    self.app.logger.debug(cookie)
-                    headers.append((b"set-cookie", cookie.encode("utf-8")))
+    async def handle_response_body(self, event: dict):
+        """Handle the response body event."""
+        body = self.extract_body(event)
+        body = await self.encode_body(body)
 
-                headers.append((b"content-encoding", content_encoding.encode("utf-8")))
+        encoding = await self.get_encoding()
 
-                # Check if 'content-length' header is already present
-                if not any(header[0] == b"content-length" for header in headers):
-                    headers.append(
-                        (b"content-length", str(content_length).encode("utf-8"))
-                    )
+        compressed_body, content_encoding = self.compress_response(body, encoding)
+        self.response.body = compressed_body
 
-                self.cached_start_event["headers"] = headers
-                self.app.logger.warning(headers)
-                await self.loop.sock_sendall(
-                    self.client_socket, self.response.to_http(self.cached_start_event)
-                )
-                self.cached_start_event = None
-            await self.loop.sock_sendall(self.client_socket, self.response.body)
+        content_length = len(compressed_body)
+        if self.cached_start_event is not None:
+            self.append_headers(
+                event, compressed_body, content_encoding, content_length
+            )
+            await self.send_start_event()
 
-            if not event.get("more_body", False):
-                self.response.is_complete = True
-                self.client_socket.close()
+        await self.send_body()
+
+        if not event.get("more_body", False):
+            self.response.is_complete = True
+            self.client_socket.close()
+
+    def extract_body(self, event: dict) -> bytes:
+        """Extract body from event."""
+        return event.get("body", b"")
+
+    async def encode_body(self, body) -> bytes:
+        """Encode the body if needed."""
+        if not isinstance(body, bytes):
+            if isinstance(body, (dict, list)):
+                body = orjson.dumps(body)
+            else:
+                body = str(body).encode("utf-8")
+
+        return body
+
+    def append_headers(
+        self, event: dict, body: bytes, content_encoding: str, content_length: int
+    ):
+        """Append necessary headers to the start event."""
+        headers = self.cached_start_event.get("headers", [])
+        self.app.logger.debug(event)
+        for cookie in event.get("set_cookies", []):
+            self.app.logger.debug(cookie)
+            headers.append((b"set-cookie", cookie.encode("utf-8")))
+
+        headers.append((b"content-encoding", content_encoding.encode("utf-8")))
+
+        if not any(header[0] == b"content-length" for header in headers):
+            headers.append((b"content-length", str(content_length).encode("utf-8")))
+
+        headers.append(
+            (b"content-security-policy", self.generate_csp().encode("utf-8"))
+        )
+        headers.append((b"x-frame-options", b"SAMEORIGIN"))
+        headers.append(
+            (b"strict-transport-security", self.generate_hsts().encode("utf-8"))
+        )
+
+        if self.request.http_method == "OPTIONS":
+            headers.extend(
+                [
+                    (b"access-control-allow-origin", b"*"),
+                    (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+                    (b"access-control-allow-headers", b"Content-Type, Authorization"),
+                    (b"access-control-allow-credentials", b"true"),
+                    (b"content-length", b"0"),
+                ]
+            )
+
+        self.cached_start_event["headers"] = headers
+
+    async def send_start_event(self):
+        """Send the cached start event."""
+        await self.loop.sock_sendall(
+            self.client_socket, self.response.to_http(self.cached_start_event)
+        )
+        self.cached_start_event = None
+
+    async def send_body(self):
+        """Send the response body."""
+        await self.loop.sock_sendall(self.client_socket, self.response.body)
 
     async def process(self):
         """Handles parsing the request and running the ASGI protocol."""
