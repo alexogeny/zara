@@ -1,6 +1,49 @@
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 T = TypeVar("T")
+
+
+class DatabaseFieldType(Generic[T]):
+    """Indicates an optional field."""
+
+    def __init__(self, field_type: T):
+        self.field_type = field_type
+
+    @classmethod
+    def __class_getitem__(cls, item):
+        return cls(item)
+
+
+class DatabaseField:
+    def __init__(
+        self,
+        data_type: Any = str,
+        primary_key: bool = False,
+        auto_increment: bool = False,
+        private: bool = False,
+        unique: bool = False,
+        nullable: bool = True,
+        index: bool = False,
+        index_type: str = "btree",
+        default: Any = None,
+    ):
+        self.data_type = data_type
+        self.primary_key = primary_key
+        self.auto_increment = auto_increment
+        self.private = private
+        self.unique = unique
+        self.nullable = nullable
+        self.index = index
+        self.index_type = index_type
+        self.default = default
+
+    def get_value(self):
+        if callable(self.default):
+            return self.default()
+        return self.default
+
+    def __repr__(self):
+        return f"<DatabaseField: {self.primary_key}, {self.auto_increment}, {self.private}, {self.unique}, {self.index}, {self.index_type}, {self.default}>"
 
 
 class Default:
@@ -17,6 +60,13 @@ class Default:
     def __repr__(self):
         # For better readability when printing, you can show the value stored
         return f"Default({self.value})"
+
+
+class Private:
+    """Indicates a private field."""
+
+    def __init__(self):
+        pass
 
 
 class Required(Generic[T]):
@@ -55,12 +105,40 @@ class AutoIncrement:
 class PrimaryKey:
     """Primary Key field."""
 
-    def __init__(self, field_type: T):
+    def __init__(
+        self, field_type: T, auto_increment: bool = False, compound: bool = False
+    ):
         self.field_type = field_type
+        self.auto_increment = auto_increment
+        self.compound = compound
 
     @classmethod
     def __class_getitem__(cls, item):
         return cls(item)
+
+
+class Index:
+    """Defines an index on one or more fields."""
+
+    def __init__(self, *fields, unique: bool = False, index_type: str = "btree"):
+        self.fields = fields
+        self.unique = unique
+        self.index_type = index_type
+
+    @classmethod
+    def __class_getitem__(cls, *items):
+        return cls(*items)
+
+
+class CompoundPrimaryKey:
+    """Defines a compound primary key."""
+
+    def __init__(self, *fields):
+        self.fields = fields
+
+    @classmethod
+    def __class_getitem__(cls, *items):
+        return cls(*items)
 
 
 class HasMany(Generic[T]):

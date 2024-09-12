@@ -1,3 +1,4 @@
+import re
 from typing import Any, Callable, Dict, List
 from urllib.parse import parse_qs
 
@@ -5,9 +6,17 @@ import orjson
 
 from zara.application.events import Event, Listener
 from zara.application.translation import I18n
-from zara.errors import AuthenticationError, InternalServerError, ValidationError
+from zara.errors import (
+    AuthenticationError,
+    DuplicateResourceError,
+    InternalServerError,
+    ResourceNotFoundError,
+    ValidationError,
+)
 
 from .events import EventBus
+
+param_pattern = re.compile(r"{(\w+):(\w+)}")
 
 
 class Request:
@@ -67,12 +76,55 @@ class Request:
         self.logger.debug(self._body)
         return orjson.loads(self._body)
 
+    def as_dict(self):
+        return {
+            "method": self.method,
+            "path": self.path,
+            "headers": self.headers,
+            "query_parameters": self.query_parameters,
+            "cookies": self.cookies,
+        }
+
 
 class Route:
     def __init__(self, path: str, method: str, handler: Callable):
         self.path = path
         self.method = method
         self.handler = handler
+        self.param_patterns = self.build_param_patterns(path)
+
+    @staticmethod
+    def build_param_patterns(path: str):
+        param_patterns = {}
+        for match in param_pattern.finditer(path):
+            param_name, param_type = match.groups()
+            if param_type == "int":
+                param_patterns[param_name] = int
+            elif param_type == "str":
+                param_patterns[param_name] = str
+        return param_patterns
+
+    def match(self, path: str):
+        parts = param_pattern.split(self.path)
+        regex = ""
+        for i, part in enumerate(parts):
+            if i % 3 == 0:
+                regex += re.escape(part)  # static part
+            elif i % 3 == 1:
+                param_name = part
+            elif i % 3 == 2:
+                param_type = part  # type
+                if param_type == "int":
+                    regex += r"(?P<{}>\d+)".format(param_name)
+                elif param_type == "str":
+                    regex += r"(?P<{}>\w+)".format(param_name)
+        match = re.match(f"^{regex}$", path)
+        if match:
+            return {
+                name: self.param_patterns[name](value)
+                for name, value in match.groupdict().items()
+            }
+        return None
 
 
 class Router:
@@ -96,12 +148,13 @@ class Router:
 
         return wrapper
 
-    def resolve(self, method: str, path: str) -> Callable:
-        """Find a matching route based on method and path."""
+    def resolve(self, method: str, path: str):
         for route in self.routes:
-            if route.method == method and route.path == path:
-                return route.handler
-        return None
+            if route.method == method:
+                params = route.match(path)
+                if params is not None:
+                    return route.handler, params
+        return None, {}
 
 
 class ASGIApplication:
@@ -136,14 +189,13 @@ class ASGIApplication:
         if request.path == "/favicon.ico":
             await self.send_favicon(send)
             self._event_bus.dispatch_event(Event("AfterRequest", request))
-
             return
         for router in self.routers:
-            handler = router.resolve(request.method, request.path)
+            handler, params = router.resolve(request.method, request.path)
             if handler:
                 request.t = self._i18n.get_translator("de")
                 try:
-                    response = await handler(request)
+                    response = await handler(request, **params)
                 except Exception as e:
                     await self.handle_exception(e, request, send)
                     return
@@ -154,10 +206,8 @@ class ASGIApplication:
                     )
                     self._event_bus.dispatch_event(Event("AfterRequest", request))
                     return
-                except UnboundLocalError as e:
-                    await self.send_500(send)
-                    self.logger.error(str(e))
-                    self._event_bus.dispatch_event(Event("AfterRequest", request))
+                except Exception as e:
+                    await self.handle_exception(e, request, send)
                     return
         await self.send_404(send, path=request.path)
         self._event_bus.dispatch_event(Event("AfterRequest", request))
@@ -171,30 +221,41 @@ class ASGIApplication:
             await self.send_400(send, data={"validation_errors": e.errors})
         elif isinstance(e, AuthenticationError):
             await self.send_401(send)
+        elif isinstance(e, ResourceNotFoundError):
+            await self.send_404(send, message=e.message)
+        elif isinstance(e, DuplicateResourceError):
+            await self.send_409(send, message=e.message)
+        else:
+            self._event_bus.dispatch_event(
+                Event("UnhandledException", {"request": request, "exception": e})
+            )
+            await self.send_500(send)
         self._event_bus.dispatch_event(Event("AfterRequest", request))
+        return
 
-    async def send_response(self, send: Callable, body: bytes, set_cookies=[]):
+    async def send_response(
+        self, send: Callable, body: bytes, set_cookies=[], status_code=200
+    ):
         """Send the HTTP response with body content."""
         await send(
             {
                 "type": "http.response.start",
-                "status": 200,
+                "status": status_code,
                 "headers": [(b"content-type", b"text/plain")],
             }
         )
         await send(
             {
                 "type": "http.response.body",
-                "body": body,
+                "body": body if status_code == 200 else {"detail": body},
                 "more_body": False,
                 "set_cookies": set_cookies,
             }
         )
 
-    async def send_404(self, send: Callable, path="/"):
+    async def send_404(self, send: Callable, message="Not Found", path="/"):
         """Send a 404 response when no route matches."""
-        await self.send_error(send, 404, "Not Found")
-        self.logger.debug(f"Returned a 404 for path: {path}")
+        await self.send_error(send, 404, message)
 
     async def send_400(self, send: Callable, data="Bad Request"):
         await self.send_error(send, 400, data)
@@ -202,28 +263,13 @@ class ASGIApplication:
     async def send_401(self, send: Callable):
         await self.send_error(send, 401, "Unauthorized")
 
+    async def send_409(self, send: Callable, message="Conflict", path="/"):
+        """Send a 409 response when a resource already exists."""
+        await self.send_error(send, 409, message)
+
     async def send_error(self, send: Callable, status_code: int, detail: str):
         """Send an error response with the given status code and detail."""
-        body = orjson.dumps({"detail": detail})
-        content_length = str(len(body)).encode()
-
-        await send(
-            {
-                "type": "http.response.start",
-                "status": status_code,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"content-length", content_length),
-                ],
-            }
-        )
-        await send(
-            {
-                "type": "http.response.body",
-                "body": body,
-                "more_body": False,
-            }
-        )
+        await self.send_response(send, detail, status_code=status_code)
 
     async def send_500(self, send: Callable):
         await self.send_error(send, 500, "Internal Server Error")

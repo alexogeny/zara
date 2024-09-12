@@ -13,6 +13,8 @@ class AsyncDatabase:
         self.db_url = env.get(
             "DATABASE_URL", default="postgresql://user:password@localhost/dbname"
         )
+        if "postgresql" in self.db_url:
+            self.backend = "postgresql"
 
     async def connect(self):
         """Establish the connection to the database."""

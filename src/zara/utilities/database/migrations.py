@@ -9,7 +9,8 @@ from typing import Optional as TypingOptional
 from .base import Model
 from .fields import (
     AutoIncrement,
-    Default,
+    DatabaseField,
+    DatabaseFieldType,
     HasMany,
     HasOne,
     Optional,
@@ -57,7 +58,8 @@ class SchemaGenerator:
                         "Required": Required,
                         "TypingOptional": TypingOptional,
                         "HasOne": HasOne,
-                        "Default": Default,
+                        "DatabaseField": DatabaseField,
+                        "DatabaseFieldType": DatabaseFieldType,
                     },
                     local_namespace,
                 )
@@ -81,11 +83,13 @@ class SchemaGenerator:
 
         sql = f"CREATE TABLE {table_name} (\n"
         field_lines = []
+        index_lines = []
+        compound_pk = None
         relation_lines = []
         for field_name, field_type in fields.items():
-            if isinstance(field_type, AutoIncrement):
-                field_lines.append(f"    {field_name} SERIAL PRIMARY KEY")
-            elif isinstance(field_type, Required):
+            print(field_name, field_type)
+            print("===============")
+            if isinstance(field_type, Required):
                 field_lines.append(
                     f"    {field_name} {self._get_sql_type(field_type.field_type)} NOT NULL"
                 )
@@ -93,8 +97,6 @@ class SchemaGenerator:
                 field_lines.append(
                     f"    {field_name} {self._get_sql_type(field_type.field_type)}"
                 )
-            elif isinstance(field_type, PrimaryKey):
-                field_lines.append(f"    {field_name} PRIMARY KEY")
             elif isinstance(field_type, HasOne):
                 matching_model = next(
                     (m for m in self.models if m.__name__ == field_type.related_model),
@@ -107,10 +109,40 @@ class SchemaGenerator:
                 )
                 relation_lines.append(foreign_key_constraint)
                 field_lines.append(f"    {field_name} INTEGER")
+            elif isinstance(field_type, DatabaseField):
+                nullable = " NOT NULL" if field_type.nullable is False else ""
+                if field_type.index is True:
+                    index_lines.append(
+                        self._generate_index_sql(
+                            table_name, field_type.unique is True, [field_name]
+                        )
+                    )
+                if (
+                    field_type.primary_key is True
+                    and field_type.auto_increment is False
+                ):
+                    field_lines.append(f"    {field_name} INTEGER PRIMARY KEY")
+                elif (
+                    field_type.primary_key is True and field_type.auto_increment is True
+                ):
+                    field_lines.append(f"    {field_name} SERIAL PRIMARY KEY")
+                elif field_type.auto_increment is True:
+                    field_lines.append(f"    {field_name} SERIAL")
+                else:
+                    field_lines.append(
+                        f"    {field_name} {self._get_sql_type(field_type.data_type)}{nullable}"
+                    )
 
+        if compound_pk:
+            field_lines.append(f"    PRIMARY KEY ({', '.join(compound_pk)})")
         sql += ",\n".join(field_lines)
         sql += "\n);\n"
-        return sql, relation_lines
+        return sql, relation_lines, index_lines
+
+    def _generate_index_sql(self, table_name: str, unique, fields):
+        unique = "UNIQUE " if unique else ""
+        fields = ", ".join(fields)
+        return f"CREATE {unique}INDEX idx_{table_name}_{fields.replace(' ', '_')} ON {table_name} ({fields});"
 
     def _get_sql_type(self, python_type):
         """Maps Python types to SQL types."""
@@ -133,12 +165,16 @@ class SchemaGenerator:
         """Generates the full schema for all registered models."""
         schema = ""
         relations = []
+        indices = []
         for model in self.models:
-            schema_part, relations_new = self.generate_create_table_sql(model)
+            schema_part, relations_new, indexes = self.generate_create_table_sql(model)
             schema += schema_part + "\n"
             relations.extend(relations_new)
+            indices.extend(indexes)
         for relation in relations:
             schema += relation
+        for index in indices:
+            schema += index
         return schema
 
     def save_template_schema(self, filename="template_schema.sql"):
@@ -276,7 +312,7 @@ class MigrationManager:
                 if statement.constraint and statement.parent_table:
                     try:
                         await db.connection.execute(statement.raw)
-                    except sqlite3.OperationalError as e:
+                    except sqlite3.OperationalError:
                         temp = await db.connection.execute(
                             f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{statement.table_name}';"
                         )
@@ -289,7 +325,9 @@ class MigrationManager:
                         await db.connection.execute(
                             f"CREATE TEMPORARY TABLE temporary AS SELECT * FROM {statement.table_name};"
                         )
-                        await db.connection.execute(f"DROP TABLE {statement.table_name};")
+                        await db.connection.execute(
+                            f"DROP TABLE {statement.table_name};"
+                        )
                         await db.connection.execute(table_sql)
                         await db.connection.execute(
                             f"INSERT INTO {statement.table_name} SELECT * FROM temporary;"
@@ -320,29 +358,21 @@ class MigrationManager:
                                     f"    FOREIGN KEY ({column_to_drop}) REFERENCES"
                                 )
                             ]
-                            print(table_sql_lines)
                             await db.connection.execute(
                                 f"CREATE TEMPORARY TABLE temporary AS SELECT * FROM {statement.table_name};"
                             )
                             await db.connection.execute(
                                 f"DROP TABLE {statement.table_name};"
                             )
-                            print("remakign table without fk constraint")
-                            print(table_sql_lines[-2])
-                            print(table_sql_lines[-1])
                             if table_sql_lines[-1] == ")" and table_sql_lines[
                                 -2
                             ].endswith(","):
                                 table_sql_lines[-2] = table_sql_lines[-2][:-1]
                             await db.connection.execute("\n".join(table_sql_lines))
-                            print("remade table")
-                            print("dumping old data back into table")
                             await db.connection.execute(
                                 f"INSERT INTO {statement.table_name} SELECT * FROM temporary;"
                             )
-                            print("dropping temp table")
                             await db.connection.execute("DROP TABLE temporary;")
-                            print("rerunning drop")
                             await db.connection.execute(statement.raw)
 
             else:
@@ -353,7 +383,8 @@ class MigrationManager:
         await db.connection.execute(
             f"INSERT INTO migrations (migration_hash) VALUES ('{migration_hash}');"
         )
-        await db.connection.commit()
+        if db.backend == "postgresql":
+            await db.connection.commit()
 
     async def apply_pending_migrations(self, db):
         """Apply any pending migrations that haven't been applied for this customer."""

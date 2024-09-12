@@ -8,12 +8,11 @@ import datetime
 from typing import TYPE_CHECKING
 
 from .fields import (
-    AutoIncrement,
+    DatabaseField,
     Default,
     HasMany,
     HasOne,
     Optional,
-    PrimaryKey,
     Required,
 )
 
@@ -39,10 +38,16 @@ if TYPE_CHECKING:
 
 
 class AuditMixin:
-    id: AutoIncrement[PrimaryKey] = AutoIncrement()
+    id: Required[int] = DatabaseField(
+        auto_increment=True, primary_key=True, data_type=int
+    )
 
-    created_at: Required[datetime.datetime] = Default(
-        datetime.datetime.now(tz=datetime.timezone.utc).replace(tzinfo=None)
+    created_at: Required[datetime.datetime] = DatabaseField(
+        default=lambda: datetime.datetime.now(tz=datetime.timezone.utc).replace(
+            tzinfo=None
+        ),
+        data_type=datetime.datetime,
+        nullable=False,
     )
     created_by: HasOne["Users"] = HasOne["Users"]
     updated_at: Optional[datetime.datetime] = None
@@ -68,17 +73,17 @@ class SettingsMixin(AuditMixin):
 class UsersMixin(AuditMixin):
     """Common properties you'd find on a user object."""
 
-    password_hash: Optional[str] = None
-    password_salt: Optional[str] = None
-    recovery_codes: Optional[str] = None
-    mfa_secret: Optional[str] = None
-    email_address: Required[str] = None
-    age: Optional[int] = Default(0)
-    name: Required[str] = None
-    username: Required[str] = None
+    password_hash: Optional[str] = DatabaseField(private=True)
+    password_salt: Optional[str] = DatabaseField(private=True)
+    recovery_codes: Optional[str] = DatabaseField(private=True)
+    mfa_secret: Optional[str] = DatabaseField(private=True)
+    email_address: Required[str] = DatabaseField(nullable=False)
+    age: Optional[int] = DatabaseField(data_type=int, default=0)
+    name: Required[str] = DatabaseField(nullable=False)
+    username: Required[str] = DatabaseField(unique=True, index=True, nullable=False)
     # settings: HasOne["Settings"] = HasOne["Settings"]
-    is_admin: Optional[bool] = Default(False)
-    is_system: Optional[bool] = Default(False)
+    is_admin: Optional[bool] = DatabaseField(data_type=bool, default=False)
+    is_system: Optional[bool] = DatabaseField(data_type=bool, default=False)
     # role: HasOne["Role"] = HasOne["Role"]
     # openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
 

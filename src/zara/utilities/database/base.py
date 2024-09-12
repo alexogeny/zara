@@ -1,8 +1,11 @@
 from typing import Any, Dict, get_type_hints
 
-from .fields import Default, HasMany
+from zara.errors import DuplicateResourceError, ResourceNotFoundError
+
+from .fields import DatabaseField, HasMany
 
 DEFAULTS = {}
+PRIVATES = {}
 
 
 class Model:
@@ -14,6 +17,8 @@ class Model:
         self._values = kwargs
         self.changed_fields = []
         for key, value in self._get_fields().items():
+            if key in self._values:
+                continue
             if self.__class__.__name__ in DEFAULTS:
                 if key in DEFAULTS[self.__class__.__name__]:
                     self._values[key] = DEFAULTS[self.__class__.__name__][
@@ -28,9 +33,11 @@ class Model:
         fields = {
             k: v for k, v in cls.__annotations__.items() if not isinstance(v, HasMany)
         }
+        print(fields)
         for base in cls.mro():
             if base is not object:
                 annotations = get_type_hints(base)
+                print(annotations)
                 for key, value in annotations.items():
                     if (
                         not key.startswith("_")
@@ -38,11 +45,18 @@ class Model:
                         and key not in fields
                         and not isinstance(value, HasMany)
                     ):
-                        if isinstance(getattr(base, key), Default):
-                            if cls.__name__ not in DEFAULTS:
-                                DEFAULTS[cls.__name__] = {}
-                            DEFAULTS[cls.__name__][key] = getattr(base, key)
-                        fields[key] = value
+                        if isinstance(getattr(base, key), DatabaseField):
+                            if getattr(base, key).default is not None:
+                                if cls.__name__ not in DEFAULTS:
+                                    DEFAULTS[cls.__name__] = {}
+                                DEFAULTS[cls.__name__][key] = getattr(base, key)
+                            if getattr(base, key).private:
+                                if cls.__name__ not in PRIVATES:
+                                    PRIVATES[cls.__name__] = {}
+                                PRIVATES[cls.__name__][key] = getattr(base, key)
+                            fields[key] = getattr(base, key)
+                        else:
+                            fields[key] = value
         return fields
 
     @classmethod
@@ -64,7 +78,12 @@ class Model:
         )
         query = f"INSERT INTO {self._get_table_name()} ({columns}) VALUES ({placeholders}) RETURNING id;"
 
-        result = await self._execute(db, query, values)
+        try:
+            result = await self._execute(db, query, values)
+        except Exception as e:
+            if "duplicate key value violates unique constraint" in str(e):
+                raise DuplicateResourceError(f"Duplicate resource found: {self}")
+            raise e
         if db.backend == "postgresql":
             self._values["id"] = result[0]["id"]
         else:
@@ -105,7 +124,10 @@ class Model:
             if db.backend == "postgresql":
                 return cls(**result[0])
             return cls(**dict(zip(cls._columns(), result[0])))
-        return None
+        filters = {f"{k}={v}" for k, v in kwargs.items()}
+        raise ResourceNotFoundError(
+            f"Result not found for criteria: {' '.join(filters)}"
+        )
 
     @classmethod
     async def get_or_create(cls, db, **kwargs):
@@ -126,13 +148,20 @@ class Model:
 
     def __repr__(self):
         """String representation of the model."""
-        return f"<{self.__class__.__name__}: {self._values}>"
+        return f"<{self.__class__.__name__}: {self.as_dict()}>"
 
     def __getattribute__(self, name):
         _values = object.__getattribute__(self, "_values")
         if name in _values:
             return _values[name]
         return object.__getattribute__(self, name)
+
+    def as_dict(self):
+        return {
+            k: v
+            for k, v in self._values.items()
+            if k not in PRIVATES[self.__class__.__name__]
+        }
 
     def set(self, **kwargs):
         if not hasattr(self, "changed_fields"):

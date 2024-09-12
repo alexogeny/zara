@@ -10,7 +10,6 @@ from zara.asgi.server import ASGIServer
 from zara.errors import UnauthenticatedError
 from zara.server.validation import BaseValidator
 from zara.utilities.database import AsyncDatabase
-from zara.utilities.dotenv import env
 from zara.utilities.jwt_encode_decode import get_keycloak_token
 
 SECRET_KEY = "your_application_secret"
@@ -62,19 +61,22 @@ class RegisterValidator(BaseValidator):
 app.add_router(router)
 
 
-@router.get("/")
-async def hello_world(request: Request):
-    request.logger.warning(env.get("DATABASE_URL"))
+@router.get("/{str:username}")
+async def hello_world(request: Request, username: str):
     database = AsyncDatabase
     async with database("acme_corp", backend="postgresql") as db:
-        try:
-            user = await Users(
-                name="John Smith", username="johnsmith", email_address="john@smith.site"
-            ).create(db)
-        except Exception as e:
-            request.logger.error(str(e))
+        user = await Users(
+            name="John Smith", username=username, email_address="john@smith.site"
+        ).create(db)
         print(f"Created user: {user}")
     return b"Hello, World! I just changed this file. I'm adding some more text to the text to see if we compress any text. I'm adding a lot more text to this because my hope is that if I make a very very very long response then we might actually be able to see some real results here."
+
+
+@router.get("/user/{id:int}")
+async def get_user(request: Request, id: int):
+    async with AsyncDatabase("acme_corp", backend="postgresql") as db:
+        user = await Users.get(db, id=id)
+    return user.as_dict()
 
 
 @router.post("/validate")
@@ -144,7 +146,14 @@ async def after_request(event: Event):
     event.logger.debug(f"AfterRequest fired: {event.data}")
 
 
+async def unhandled_exception(event: Event):
+    event.logger.error(
+        f"Unhandled exception: {event.data['exception']}\n\nRequest: {event.data["request"].as_dict()}"
+    )
+
+
 app.add_listener("AfterRequest", after_request)
+app.add_listener("UnhandledException", unhandled_exception)
 
 
 async def on_scheduled_event(event: Event):

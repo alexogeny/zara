@@ -24,12 +24,34 @@ class DropTable(SQLStatement):
         super().__init__(table_name, raw)
 
 
+class CreateIndex(SQLStatement):
+    def __init__(
+        self,
+        table_name: str,
+        raw: str,
+        index_name: str,
+        unique: bool,
+        fields: List[str],
+    ):
+        super().__init__(table_name, raw)
+        self.index_name = index_name
+        self.unique = unique
+        self.fields = fields
+
+
 class CreateTable(SQLStatement):
-    def __init__(self, table_name: str, raw: str, columns: Dict[str, str]):
+    def __init__(
+        self,
+        table_name: str,
+        raw: str,
+        columns: Dict[str, str],
+        compound_pk: Optional[List[str]] = None,
+    ):
         super().__init__(table_name, raw)
         self.columns = (
             columns  # Store columns as a dictionary {column_name: column_definition}
         )
+        self.compound_pk = compound_pk
 
     def __eq__(self, other):
         return super().__eq__(other) and self.columns == other.columns
@@ -66,6 +88,9 @@ def parse_sql_statements(sql_content: str) -> List[SQLStatement]:
     drop_pattern = r"DROP\s+TABLE\s+IF\s+EXISTS\s+(\w+);"
     create_pattern = r"CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);"
     alter_pattern = r"ALTER\s+TABLE\s+(\w+)\s+(.*?);"
+    create_index_pattern = (
+        r"CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+(\w+)\s*\((.*?)\);"
+    )
 
     statements = []
 
@@ -109,6 +134,15 @@ def parse_sql_statements(sql_content: str) -> List[SQLStatement]:
         else:
             # For other alter operations, just store the operation without parsing further
             statements.append(AlterTable(table_name, match.group(0), operation))
+
+    for match in re.finditer(create_index_pattern, sql_content, re.IGNORECASE):
+        unique = bool(match.group(1))
+        index_name = match.group(2)
+        table_name = match.group(3)
+        fields = [f.strip() for f in match.group(4).split(",")]
+        statements.append(
+            CreateIndex(table_name, match.group(0), index_name, unique, fields)
+        )
 
     return statements
 
@@ -160,6 +194,16 @@ def compare_sql_statements(
     after_tables = set(after_dict.keys())
     before_alters = set(before_dict.keys())
     after_alters = set(after_dict.keys())
+    before_indexes = {
+        stmt.index_name: stmt
+        for stmt in before_statements
+        if isinstance(stmt, CreateIndex)
+    }
+    after_indexes = {
+        stmt.index_name: stmt
+        for stmt in after_statements
+        if isinstance(stmt, CreateIndex)
+    }
 
     added_tables = after_tables - before_tables
     removed_tables = before_tables - after_tables
@@ -193,7 +237,20 @@ def compare_sql_statements(
                 )  # Pass the table name and column differences
         elif before_table != after_table:
             modified.append((table, {}))
+    for index_name, after_index in after_indexes.items():
+        if index_name not in before_indexes:
+            added.append(after_index)
+        elif before_indexes[index_name] != after_index:
+            modified.append(
+                (
+                    index_name,
+                    {"before": before_indexes[index_name], "after": after_index},
+                )
+            )
 
+    for index_name, before_index in before_indexes.items():
+        if index_name not in after_indexes:
+            removed.append(before_index)
     return added, removed, modified, constraints
 
 

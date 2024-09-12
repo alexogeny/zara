@@ -24,3 +24,21 @@ class ValidationError(Exception):
     def __init__(self, errors):
         self.errors = errors
         super().__init__(errors)
+
+
+class DatabaseError(Exception):
+    def __init__(self, message):
+        self.message = message
+        super().__init__(message)
+
+
+class DuplicateResourceError(DatabaseError):
+    def __init__(self, message):
+        self.message = message
+        super().__init__(message)
+
+
+class ResourceNotFoundError(DatabaseError):
+    def __init__(self, message):
+        self.message = message
+        super().__init__(message)
