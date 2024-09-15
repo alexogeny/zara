@@ -14,6 +14,8 @@ from zara.errors import (
     ResourceNotFoundError,
     ValidationError,
 )
+from zara.utilities.context import Context
+from zara.utilities.database import AsyncDatabase
 
 from .events import EventBus
 
@@ -236,11 +238,13 @@ class ASGIApplication:
             handler, params = router.resolve(request.method, request.path, self.logger)
             if handler:
                 request.t = self._i18n.get_translator("de")
-                try:
-                    response = await handler(request, **params)
-                except Exception as e:
-                    await self.handle_exception(e, request, send)
-                    return
+                async with AsyncDatabase("acme_corp", backend="postgresql") as db:
+                    with Context.context(db, request):
+                        try:
+                            response = await handler(request, **params)
+                        except Exception as e:
+                            await self.handle_exception(e, request, send)
+                            return
 
                 try:
                     await self.send_response(

@@ -68,12 +68,10 @@ async def hello_world(request: Request):
 
 @router.get("/{username:str}")
 async def hello_world_create(request: Request, username: str):
-    database = AsyncDatabase
-    async with database("acme_corp", backend="postgresql") as db:
-        user = await Users(
-            name="John Smith", username=username, email_address="john@smith.site"
-        ).create(db)
-        request.logger.debug(f"Created user: {user}")
+    user = await Users(
+        name="John Smith", username=username, email_address="john@smith.site"
+    ).create()
+    request.logger.debug(f"Created user: {user}")
     return user
 
 

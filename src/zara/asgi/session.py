@@ -164,7 +164,7 @@ class ASGISession:
             if isinstance(body, (dict, list)):
                 body = orjson.dumps(body)
                 is_json = True
-            if isinstance(body, base.Model):
+            elif isinstance(body, base.Model):
                 body = orjson.dumps(body.as_dict())
                 is_json = True
             else:
