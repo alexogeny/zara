@@ -7,7 +7,7 @@ import sqlite3
 from typing import List
 from typing import Optional as TypingOptional
 
-from .base import Model
+from .base import Model, Public
 from .fields import (
     AutoIncrement,
     DatabaseField,
@@ -64,11 +64,11 @@ class SchemaGenerator:
                         "HasOne": HasOne,
                         "DatabaseField": DatabaseField,
                         "DatabaseFieldType": DatabaseFieldType,
+                        "Public": Public,
                     },
                     local_namespace,
                 )
 
-                # Inspect local namespace for classes that inherit from Model
                 for name, obj in local_namespace.items():
                     if (
                         inspect.isclass(obj)
@@ -91,8 +91,6 @@ class SchemaGenerator:
         compound_pk = None
         relation_lines = []
         for field_name, field_type in fields.items():
-            print(field_name, field_type)
-            print("===============")
             if isinstance(field_type, Required):
                 field_lines.append(
                     f"    {field_name} {self._get_sql_type(field_type.field_type)} NOT NULL"
@@ -165,7 +163,7 @@ class SchemaGenerator:
             return "BOOLEAN"
         elif python_type is None:
             return None
-        elif python_type is datetime.datetime:
+        elif python_type is datetime.datetime or python_type is datetime:
             return "TIMESTAMP"
         else:
             raise ValueError(f"Unsupported type: {python_type}")
@@ -392,7 +390,7 @@ class MigrationManager:
         await db.connection.execute(
             f"INSERT INTO migrations (migration_hash) VALUES ('{migration_hash}');"
         )
-        if db.backend == "postgresql":
+        if db.backend == "sqlite":
             await db.connection.commit()
 
     async def apply_pending_migrations(self, db):

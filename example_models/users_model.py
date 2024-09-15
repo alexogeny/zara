@@ -8,16 +8,3 @@ from zara.utilities.database.mixins import (
 
 class Users(Model, UsersMixin):
     pass
-    # pets: HasMany["Pet"] = HasMany["Pet"]  # type: ignore  # noqa: F821
-
-
-# class Settings(Model, SettingsMixin):
-#     pass
-
-
-# class Role(Model, RoleMixin):
-#     pass
-
-
-# class Permission(Model, PermissionMixin):
-#     pass

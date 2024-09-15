@@ -10,14 +10,25 @@ DEFAULTS = {}
 PRIVATES = {}
 
 
+# generic class with __dict__ method
+class ModelWithDict:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    @property
+    def __dict__(self):
+        return self.kwargs
+
+
 class Model:
     _table_name: str
     _fields: Dict[str, Any]
 
-    def __init__(self, **kwargs):
+    def __init__(self, should_audit=True, **kwargs):
         self._defaults: Dict[str, Any]
         self._values = kwargs
         self.changed_fields = []
+        self.should_audit = should_audit
         for key, value in self._get_fields().items():
             if key in self._values:
                 continue
@@ -28,6 +39,15 @@ class Model:
                     ].get_value()
         for key, value in kwargs.items():
             self._values[key] = value
+        self.public = self._check_if_public()
+
+    @classmethod
+    def _check_if_public(cls):
+        for base in cls.mro():
+            if base is not object:
+                if issubclass(base, Public):
+                    return True
+        return False
 
     @classmethod
     def _get_fields(cls):
@@ -35,11 +55,9 @@ class Model:
         fields = {
             k: v for k, v in cls.__annotations__.items() if not isinstance(v, HasMany)
         }
-        print(fields)
         for base in cls.mro():
             if base is not object:
                 annotations = get_type_hints(base)
-                print(annotations)
                 for key, value in annotations.items():
                     if (
                         not key.startswith("_")
@@ -68,6 +86,11 @@ class Model:
     @classmethod
     def _get_table_name(cls):
         """Get the table name from the class name."""
+        if cls._check_if_public():
+            name = cls.__name__.lower()
+            if name.startswith("public"):
+                name = name[6:]
+            return f"public.{name}"
         return cls.__name__.lower()
 
     async def create(self):
@@ -90,18 +113,25 @@ class Model:
             self._values["id"] = result[0]["id"]
         else:
             self._values["id"] = result[0][0]
-        event_bus = Context.get_event_bus()
-        if event_bus is not None:
-            event_bus.dispatch_event(
-                Event(
-                    "AuditEvent",
-                    {"model": self, "action_type": "create", "request": request},
+        if self.should_audit:
+            event_bus = Context.get_event_bus()
+            if event_bus is not None:
+                event_bus.dispatch_event(
+                    Event(
+                        "AuditEvent",
+                        {
+                            "model": self,
+                            "request": request,
+                            "meta": ModelWithDict(action_type="create"),
+                        },
+                    )
                 )
-            )
         return self
 
-    async def save(self, db):
+    async def save(self):
         """Update an existing record in the database."""
+        request = Context.get_request()
+        request.logger.info(f"changed fields: {self.changed_fields}")
         if not self.changed_fields:
             return
 
@@ -114,12 +144,27 @@ class Model:
 
         query = f"UPDATE {self._get_table_name()} SET {updates} WHERE id = ${len(changed_fields) + 1};"
 
+        db = Context.get_db()
         await self._execute(db, query, values + (self._values["id"],))
 
         self.changed_fields.clear()
 
+        if self.should_audit:
+            event_bus = Context.get_event_bus()
+            if event_bus is not None:
+                event_bus.dispatch_event(
+                    Event(
+                        "AuditEvent",
+                        {
+                            "model": self,
+                            "request": request,
+                            "meta": ModelWithDict(action_type="update"),
+                        },
+                    )
+                )
+
     @classmethod
-    async def get(cls, db, **kwargs):
+    async def get(cls, **kwargs):
         """Retrieve a record from the database."""
         table_name = cls._get_table_name()
         where_clause = " AND ".join(
@@ -128,6 +173,7 @@ class Model:
         values = tuple(kwargs.values())
 
         query = f"SELECT * FROM {table_name} WHERE {where_clause} LIMIT 1;"
+        db = Context.get_db()
         result = await cls._execute(db, query, values)
         if result:
             if db.backend == "postgresql":
@@ -171,8 +217,12 @@ class Model:
         return {
             k: v
             for k, v in self._values.items()
-            if k not in PRIVATES[self.__class__.__name__]
+            if k not in PRIVATES.get(self.__class__.__name__, [])
         }
+
+    @property
+    def __dict__(self):
+        return self.as_dict()
 
     def as_dictionary(self):
         return self.as_dict()
@@ -187,8 +237,12 @@ class Model:
         if not hasattr(self, "changed_fields"):
             object.__setattr__(self, "changed_fields", [])
         for name, value in kwargs.items():
-            if "_values" in self.__dict__ and name in self._get_fields():
+            if hasattr(self, "_values") and name in self._get_fields():
                 self._values[name] = value
                 # Add the field to changed_fields if not already tracked
                 if name not in self.changed_fields:
                     self.changed_fields.append(name)
+
+
+class Public:
+    pass

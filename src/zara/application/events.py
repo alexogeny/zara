@@ -15,7 +15,13 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 class Event:
     def __init__(self, name: str, data: Dict[str, Any] = None, logger=None):
         self.name = name
-        self.data = data or {}
+        self.data = {}
+        for key, value in data.items():
+            if not hasattr(value, "__dict__"):
+                raise ValueError(
+                    f"Tried to dispatch a {name} event that doesn't have a __dict__: {key}={value}"
+                )
+            self.data[key] = value.__dict__
         self.timestamp = datetime.now()
         self._logger = logger
 
