@@ -9,8 +9,8 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
-      interval: 10s
-      retries: 5
+      interval: 5s
+      retries: 10
     ports:
       - "5432:5432"
     networks:
