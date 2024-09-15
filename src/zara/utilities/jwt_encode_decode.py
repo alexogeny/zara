@@ -115,7 +115,7 @@ def create_refresh_token() -> str:
 
 
 async def get_keycloak_token(
-    username: str, password: str, endpoint_config: dict = None
+    username: str, password: str, logger, endpoint_config: dict = None
 ) -> dict:
     """
     Gets a token from the given Keycloak or OpenID endpoint config.
@@ -146,7 +146,6 @@ async def get_keycloak_token(
             * 60,  # In seconds,
             "token_type": "Bearer",
         }
-
     # If endpoint_config is provided, fetch the token from the provided endpoint
     data = {
         "client_id": endpoint_config.get("client_id"),
@@ -167,7 +166,6 @@ async def get_keycloak_token(
         context = (
             ssl._create_unverified_context()
         )  # To avoid SSL verification for local testing
-
         with urllib.request.urlopen(req, context=context) as response:
             return json.loads(response.read().decode())
 
@@ -176,7 +174,7 @@ async def get_keycloak_token(
 
 async def fetch_openid_configuration(issuer_url: str):
     """Fetches OpenID configuration from the given issuer URL."""
-    openid_config_url = f"{issuer_url}/.well-known/openid-configuration"
+    openid_config_url = f"{issuer_url.replace('locahost', 'localhost')}/.well-known/openid-configuration"
     return await asyncio.to_thread(_sync_fetch_openid_config, openid_config_url)
 
 

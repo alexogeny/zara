@@ -5,11 +5,15 @@ from example_models.users_model import Users
 from zara.application.application import ASGIApplication, Request, Router
 from zara.application.authentication import auth_required
 from zara.application.events import Event
-from zara.application.validation import Required, check_required_fields, validate
+from zara.application.validation import (
+    Required,
+    ValidatorBase,
+    check_required_fields,
+    validate,
+)
 from zara.asgi.server import ASGIServer
 from zara.errors import UnauthenticatedError
-from zara.server.validation import BaseValidator
-from zara.utilities.database import AsyncDatabase
+from zara.utilities.database.models.configuration_model import OpenIDProvider
 from zara.utilities.jwt_encode_decode import get_keycloak_token
 
 SECRET_KEY = "your_application_secret"
@@ -23,9 +27,8 @@ app = ASGIApplication()
 router = Router()
 
 
-# testing hot reload in doc
 @dataclass
-class RegisterValidator(BaseValidator):
+class RegisterValidator(ValidatorBase):
     name: Required[str] = None
     receive_marketing: bool = False
     email: Optional[str] = None
@@ -77,8 +80,7 @@ async def hello_world_create(request: Request, username: str):
 
 @router.get("/user/{id:str}")
 async def get_user(request: Request, id: str):
-    async with AsyncDatabase("acme_corp", backend="postgresql") as db:
-        user = await Users.get(db, id=id)
+    user = await Users.get(id=id)
     return user
 
 
@@ -95,34 +97,71 @@ router_two = Router(name="two", prefix="/two")
 app.add_router(router_two)
 
 
+@router.post("/create-openid-provider")
+async def create_openid_provider(request: Request):
+    data = await request.json()
+    user = await Users.get(username=data.get("username"))
+    if not user:
+        return {"error": "User not found"}, 404
+    if user.is_system:
+        return {"error": "User is system"}, 403
+    openid_provider = OpenIDProvider(
+        client_id=data.get("client_id"),
+        client_secret=data.get("client_secret"),
+        redirect_uri=data.get("redirect_uri"),
+        scope=data.get("scope"),
+        issuer=data.get("issuer"),
+        is_active=True,
+    )
+
+    await openid_provider.create()
+    return openid_provider.as_dict()
+
+
+@router.post("/update-user")
+async def update_user(request: Request):
+    data = await request.json()
+    user = await Users.get(username=data.get("username"))
+    if not user:
+        return {"error": "User not found"}, 404
+    if user.is_system:
+        return {"error": "User is system"}, 403
+    user.set(
+        openid_username=data.get("openid_username"),
+        openid_provider=data.get("openid_provider"),
+    )
+    await user.save()
+    return user.as_dict()
+
+
 @router.post("/login")
 async def login(request: Request):
     data = await request.json()
-    request.logger.debug(data)
     username = data.get("username")
     password = data.get("password")
-    # TODO: user table should delineate users that have OID connected in each schema
-    internal_user = username != "internal_user"
-    request.logger.debug(f"{username} username, {password} password")
-
     if not username or not password:
         return {"error": "Username and password are required"}, 400
+    user = await Users.get(username=username)
+    if not user:
+        return {"error": "User not found"}, 404
 
     config = None
-    if not internal_user:
+    if not user.is_system and user.openid_provider is not None:
+        openid_provider = await OpenIDProvider.get(id=user.openid_provider)
         config = {
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "redirect_uri": REDIRECT_URI,
-            "token_url": "http://localhost:8080/realms/master/protocol/openid-connect/token",
+            "client_id": openid_provider.client_id,
+            "client_secret": openid_provider.client_secret,
+            "redirect_uri": openid_provider.redirect_uri,
+            "token_url": openid_provider.issuer.replace("localhost", "keycloak"),
         }
 
     try:
-        request.logger.debug(f"is internal: {internal_user}")
         token_response = await get_keycloak_token(
-            username, password, endpoint_config=config
+            user.openid_username or username,
+            password,
+            request.logger,
+            endpoint_config=config,
         )
-        request.logger.debug(token_response)
         if "error" in token_response:
             return {"error": token_response["error_description"]}, 401
         request.set_cookie("refreshToken", token_response["refresh_token"])
@@ -149,14 +188,7 @@ async def after_request(event: Event):
     event.logger.debug(f"AfterRequest fired: {event.data}")
 
 
-async def unhandled_exception(event: Event):
-    event.logger.error(
-        f"Unhandled exception: {event.data['exception']}\n\nRequest: {event.data["request"].as_dict()}"
-    )
-
-
 app.add_listener("AfterRequest", after_request)
-app.add_listener("UnhandledException", unhandled_exception)
 
 
 async def on_scheduled_event(event: Event):

@@ -100,7 +100,8 @@ class UsersMixin(AuditMixin):
     is_admin: Optional[bool] = DatabaseField(data_type=bool, default=False)
     is_system: Optional[bool] = DatabaseField(data_type=bool, default=False)
     # role: HasOne["Role"] = HasOne["Role"]
-    # openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
+    openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
+    openid_username: Optional[str] = DatabaseField(nullable=True)
 
 
 class SessionMixin:
@@ -135,11 +136,3 @@ class RolePermissionMixin:
 
     role: HasOne["Role"] = HasOne["Role"]
     permission: HasOne["Permission"] = HasOne["Permission"]
-
-
-class OpenIDProvidersMixin(AuditMixin):
-    client_id: Required[str] = None
-    client_secret: Required[str] = None
-    redirect_uri: Optional[str] = None
-
-    users: HasMany["Users"] = HasMany["Users"]
