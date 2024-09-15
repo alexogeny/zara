@@ -54,6 +54,7 @@ class ASGIServer:
             Event("OnScheduledEvent", {}), delay=timedelta(seconds=10)
         )
         self.app._attach_logger(self.logger)
+        self.app._check_duplicate_routes()
         self.logger.info(f"Serving on http://{self.host}:{self.port}")
         while True:
             client_socket, _ = await self.loop.sock_accept(self.server_socket)

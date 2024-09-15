@@ -1,5 +1,6 @@
 import re
-from typing import Any, Callable, Dict, List
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Tuple
 from urllib.parse import parse_qs
 
 import orjson
@@ -86,12 +87,16 @@ class Request:
         }
 
 
+@dataclass
 class Route:
-    def __init__(self, path: str, method: str, handler: Callable):
-        self.path = path
-        self.method = method
-        self.handler = handler
-        self.param_patterns = self.build_param_patterns(path)
+    path: str
+    method: str
+    handler: Callable
+    param_patterns: Dict[str, type] = None
+
+    def __post_init__(self):
+        if self.param_patterns is None:
+            self.param_patterns = self.build_param_patterns(self.path)
 
     @staticmethod
     def build_param_patterns(path: str):
@@ -104,57 +109,79 @@ class Route:
                 param_patterns[param_name] = str
         return param_patterns
 
-    def match(self, path: str):
-        parts = param_pattern.split(self.path)
-        regex = ""
-        for i, part in enumerate(parts):
-            if i % 3 == 0:
-                regex += re.escape(part)  # static part
-            elif i % 3 == 1:
-                param_name = part
-            elif i % 3 == 2:
-                param_type = part  # type
+    def match(self, path: str, logger) -> Dict[str, Any] | None:
+        # Ensure both paths start with a slash and don't end with one
+        route_path = "/" + self.path.strip("/")
+        request_path = "/" + path.strip("/")
+        logger.debug(f"Route path: {route_path}, request path: {request_path}")
+        if route_path == request_path:
+            return {}
+
+        route_parts = route_path.split("/")
+        path_parts = request_path.split("/")
+
+        if len(route_parts) != len(path_parts):
+            return None
+
+        params = {}
+        for route_part, path_part in zip(route_parts, path_parts):
+            if route_part.startswith("{") and route_part.endswith("}"):
+                param_name, param_type = route_part[1:-1].split(":")
                 if param_type == "int":
-                    regex += r"(?P<{}>\d+)".format(param_name)
+                    try:
+                        params[param_name] = int(path_part)
+                    except ValueError:
+                        return None
                 elif param_type == "str":
-                    regex += r"(?P<{}>\w+)".format(param_name)
-        match = re.match(f"^{regex}$", path)
-        if match:
-            return {
-                name: self.param_patterns[name](value)
-                for name, value in match.groupdict().items()
-            }
-        return None
+                    params[param_name] = path_part
+            elif route_part != path_part:
+                return None
+
+        return params
 
 
 class Router:
-    def __init__(self, name: str = "default"):
+    def __init__(self, name: str = "default", prefix: str = ""):
         self.name = name
+        self.prefix = prefix.strip("/")  # Remove leading and trailing slashes
         self.routes: List[Route] = []
 
+    def add_route(self, method: str, path: str, handler: Callable):
+        full_path = f"/{self.prefix}/{path.lstrip('/')}".rstrip("/")
+        if full_path == "":
+            full_path = "/"
+        self.routes.append(Route(path=full_path, method=method, handler=handler))
+
     def get(self, path: str):
-        """Decorator to add a GET route."""
-
-        def wrapper(handler: Callable):
-            self.routes.append(Route(path=path, method="GET", handler=handler))
-            return handler
-
-        return wrapper
+        return lambda handler: self.add_route("GET", path, handler)
 
     def post(self, path: str):
-        def wrapper(handler: Callable):
-            self.routes.append(Route(path=path, method="POST", handler=handler))
-            return handler
+        return lambda handler: self.add_route("POST", path, handler)
 
-        return wrapper
-
-    def resolve(self, method: str, path: str):
+    def resolve(
+        self, method: str, path: str, logger
+    ) -> Tuple[Callable | None, Dict[str, Any]]:
+        # Ensure path starts with a slash
+        if not path.startswith("/"):
+            path = "/" + path
         for route in self.routes:
             if route.method == method:
-                params = route.match(path)
+                params = route.match(path, logger)
                 if params is not None:
                     return route.handler, params
         return None, {}
+
+    def include_router(self, router: "Router"):
+        for route in router.routes:
+            full_path = f"/{self.prefix}/{route.path.lstrip('/')}".rstrip("/")
+            if full_path == "":
+                full_path = "/"
+            self.routes.append(
+                Route(path=full_path, method=route.method, handler=route.handler)
+            )
+
+    def __str__(self):
+        return f"Router(name='{self.name}', prefix='{self.prefix}', routes={len(self.routes)})"
 
 
 class ASGIApplication:
@@ -182,6 +209,21 @@ class ASGIApplication:
     def _attach_logger(self, logger):
         self.logger = logger
 
+    def _check_duplicate_routes(self) -> List[str]:
+        all_routes = [route for router in self.routers for route in router.routes]
+        self.logger.info(all_routes)
+        duplicates = []
+        seen = set()
+        for route in all_routes:
+            key = (route.method, route.path)
+            self.logger.info(key)
+            if key in seen:
+                duplicates.append(f"{route.method} {route.path}")
+            else:
+                seen.add(key)
+        self.logger.warning(f"Duplicate routes: {duplicates}")
+        return duplicates
+
     async def __call__(self, scope: Dict[str, Any], receive: Callable, send: Callable):
         assert scope["type"] == "http"
         request = Request(scope, receive, logger=self.logger)
@@ -191,7 +233,7 @@ class ASGIApplication:
             self._event_bus.dispatch_event(Event("AfterRequest", request))
             return
         for router in self.routers:
-            handler, params = router.resolve(request.method, request.path)
+            handler, params = router.resolve(request.method, request.path, self.logger)
             if handler:
                 request.t = self._i18n.get_translator("de")
                 try:
