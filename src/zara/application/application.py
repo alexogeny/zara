@@ -1,4 +1,5 @@
 import re
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Tuple
 from urllib.parse import parse_qs
@@ -17,6 +18,7 @@ from zara.errors import (
 from zara.utilities.audit import create_audit_log
 from zara.utilities.context import Context
 from zara.utilities.database import AsyncDatabase
+from zara.utilities.database.migrations import MigrationManager
 
 from .events import EventBus
 
@@ -88,6 +90,19 @@ class Request:
             "query_parameters": self.query_parameters,
             "cookies": self.cookies,
         }
+
+    @property
+    def __dict__(self):
+        return self.as_dict()
+
+
+class ExceptionWithDict:
+    def __init__(self, e):
+        self.e = e
+
+    @property
+    def __dict__(self):
+        return str(self.e)
 
 
 @dataclass
@@ -212,12 +227,21 @@ class ASGIApplication:
     def _attach_logger(self, logger):
         self.logger = logger
 
-    def _audit_listeners(self):
+    def _internal_listeners(self):
         async def audit_listener(event: Event):
             event.logger.debug(f"Auditing event: {event.data}")
             await create_audit_log(event)
 
         self._event_bus.register_listener("AuditEvent", Listener(audit_listener))
+
+        async def unhandled_exception_listener(event: Event):
+            event.logger.error(
+                f"Unhandled exception: {event.data['exception']}\n\nRequest: {event.data['request']}  {event}"
+            )
+
+        self._event_bus.register_listener(
+            "UnhandledException", Listener(unhandled_exception_listener)
+        )
 
     def _check_duplicate_routes(self) -> List[str]:
         all_routes = [route for router in self.routers for route in router.routes]
@@ -231,22 +255,44 @@ class ASGIApplication:
                 duplicates.append(f"{route.method} {route.path}")
             else:
                 seen.add(key)
-        self.logger.warning(f"Duplicate routes: {duplicates}")
+        if duplicates:
+            self.logger.warning(f"Duplicate routes: {duplicates}")
         return duplicates
+
+    # check migrations folder at root has migration files and throw if not
+    def _check_migrations(self):
+        if not MigrationManager().get_migration_files():
+            self.logger.error(
+                "No migrations found. Please run 'uv run migrate.py --create <migration_name>'"
+            )
+            raise sys.exit(1)
+
+    async def get_x_subdomain(self, request: Request):
+        result = "acme_corp"
+        if request.headers.get("X-Subdomain"):
+            result = request.headers.get("X-Subdomain")
+        if request.headers.get("X-Forwarded-Host"):
+            result = request.headers.get("X-Forwarded-Host").split(":")[0]
+        if request.headers.get("Host"):
+            split = request.headers.get("Host").split(".")
+            if len(split) == 3:
+                result = split[0]
+        return result.lower().replace("-", "_")
 
     async def __call__(self, scope: Dict[str, Any], receive: Callable, send: Callable):
         assert scope["type"] == "http"
         request = Request(scope, receive, logger=self.logger)
-        self._event_bus.dispatch_event(Event("BeforeRequest", request))
+        self._event_bus.dispatch_event(Event("BeforeRequest", {"request": request}))
         if request.path == "/favicon.ico":
             await self.send_favicon(send)
-            self._event_bus.dispatch_event(Event("AfterRequest", request))
+            self._event_bus.dispatch_event(Event("AfterRequest", {"request": request}))
             return
         for router in self.routers:
             handler, params = router.resolve(request.method, request.path, self.logger)
             if handler:
                 request.t = self._i18n.get_translator("de")
-                async with AsyncDatabase("acme_corp", backend="postgresql") as db:
+                x_subdomain = await self.get_x_subdomain(request)
+                async with AsyncDatabase(x_subdomain, backend="postgresql") as db:
                     with Context.context(db, request, self._event_bus):
                         try:
                             response = await handler(request, **params)
@@ -258,13 +304,15 @@ class ASGIApplication:
                     await self.send_response(
                         send, response, set_cookies=request.cookies or []
                     )
-                    self._event_bus.dispatch_event(Event("AfterRequest", request))
+                    self._event_bus.dispatch_event(
+                        Event("AfterRequest", {"request": request})
+                    )
                     return
                 except Exception as e:
                     await self.handle_exception(e, request, send)
                     return
         await self.send_404(send, path=request.path)
-        self._event_bus.dispatch_event(Event("AfterRequest", request))
+        self._event_bus.dispatch_event(Event("AfterRequest", {"request": request}))
         return
 
     async def handle_exception(self, e, request, send):
@@ -281,11 +329,21 @@ class ASGIApplication:
             await self.send_409(send, message=e.message)
         else:
             self._event_bus.dispatch_event(
-                Event("UnhandledException", {"request": request, "exception": e})
+                Event(
+                    "UnhandledException",
+                    {
+                        "request": request,
+                        "exception": self.convert_exception_to_class_with__dict__(e),
+                    },
+                )
             )
             await self.send_500(send)
-        self._event_bus.dispatch_event(Event("AfterRequest", request))
+        self._event_bus.dispatch_event(Event("AfterRequest", {"request": request}))
         return
+
+    def convert_exception_to_class_with__dict__(self, e):
+        exception_with_dict = ExceptionWithDict(e)
+        return exception_with_dict
 
     async def send_response(
         self, send: Callable, body: bytes, set_cookies=[], status_code=200
