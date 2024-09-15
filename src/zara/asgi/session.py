@@ -131,7 +131,9 @@ class ASGISession:
     async def handle_response_body(self, event: dict):
         """Handle the response body event."""
         body = self.extract_body(event)
-        body = await self.encode_body(body)
+        body, is_json = await self.encode_body(body)
+        content_type = "application/json" if is_json else "text/plain"
+        self.app.logger.debug(f"Content type: {content_type}")
 
         encoding = await self.get_encoding()
 
@@ -141,7 +143,7 @@ class ASGISession:
         content_length = len(compressed_body)
         if self.cached_start_event is not None:
             self.append_headers(
-                event, compressed_body, content_encoding, content_length
+                event, compressed_body, content_encoding, content_length, content_type
             )
             await self.send_start_event()
 
@@ -157,18 +159,26 @@ class ASGISession:
 
     async def encode_body(self, body) -> bytes:
         """Encode the body if needed."""
+        is_json = False
         if not isinstance(body, bytes):
             if isinstance(body, (dict, list)):
                 body = orjson.dumps(body)
+                is_json = True
             if isinstance(body, base.Model):
                 body = orjson.dumps(body.as_dict())
+                is_json = True
             else:
                 body = str(body).encode("utf-8")
 
-        return body
+        return body, is_json
 
     def append_headers(
-        self, event: dict, body: bytes, content_encoding: str, content_length: int
+        self,
+        event: dict,
+        body: bytes,
+        content_encoding: str,
+        content_length: int,
+        content_type: str,
     ):
         """Append necessary headers to the start event."""
         headers = self.cached_start_event.get("headers", [])
@@ -181,6 +191,15 @@ class ASGISession:
 
         if not any(header[0] == b"content-length" for header in headers):
             headers.append((b"content-length", str(content_length).encode("utf-8")))
+
+        content_type_header = [
+            header for header in headers if header[0] == b"content-type"
+        ]
+        if content_type_header:
+            headers = [header for header in headers if header[0] != b"content-type"]
+            headers.append((b"content-type", content_type.encode("utf-8")))
+        else:
+            headers.append((b"content-type", content_type.encode("utf-8")))
 
         headers.append(
             (b"content-security-policy", self.generate_csp().encode("utf-8"))
@@ -202,6 +221,7 @@ class ASGISession:
             )
 
         self.cached_start_event["headers"] = headers
+        self.app.logger.debug(self.cached_start_event)
 
     async def send_start_event(self):
         """Send the cached start event."""
