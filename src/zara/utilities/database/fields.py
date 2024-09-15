@@ -25,6 +25,7 @@ class DatabaseField:
         nullable: bool = True,
         index: bool = False,
         index_type: str = "btree",
+        length: int = None,
         default: Any = None,
     ):
         self.data_type = data_type
@@ -36,6 +37,7 @@ class DatabaseField:
         self.index = index
         self.index_type = index_type
         self.default = default
+        self.length = length
 
     def get_value(self):
         if callable(self.default):

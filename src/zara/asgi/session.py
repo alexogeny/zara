@@ -9,6 +9,7 @@ import zstandard as zstd
 from httptools import HttpRequestParser
 
 from zara.application.application import ASGIApplication
+from zara.utilities.database import base
 
 from .request import ASGIRequest
 from .response import ASGIResponse
@@ -159,6 +160,8 @@ class ASGISession:
         if not isinstance(body, bytes):
             if isinstance(body, (dict, list)):
                 body = orjson.dumps(body)
+            if isinstance(body, base.Model):
+                body = orjson.dumps(body.as_dict())
             else:
                 body = str(body).encode("utf-8")
 

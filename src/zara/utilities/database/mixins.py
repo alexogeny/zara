@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime
 from typing import TYPE_CHECKING
 
+from ..id57 import generate_lexicographical_uuid
 from .fields import (
     DatabaseField,
     Default,
@@ -38,8 +39,12 @@ if TYPE_CHECKING:
 
 
 class AuditMixin:
-    id: Required[int] = DatabaseField(
-        auto_increment=True, primary_key=True, data_type=int
+    id: Required[str] = DatabaseField(  # Base 57 timestamped uuid 4
+        auto_increment=False,
+        primary_key=True,
+        data_type=str,
+        length=30,
+        default=lambda: generate_lexicographical_uuid(),
     )
 
     created_at: Required[datetime.datetime] = DatabaseField(

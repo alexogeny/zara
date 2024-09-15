@@ -2,6 +2,7 @@ import datetime
 import hashlib
 import inspect
 import os
+import re
 import sqlite3
 from typing import List
 from typing import Optional as TypingOptional
@@ -21,9 +22,12 @@ from .sqllex import AlterTable, DropTable, compare_sql_statements, parse_sql_sta
 
 
 def translate_pgsql_to_sqlite(query):
-    return query.replace(
+    query = query.replace(
         "SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT"
     ).replace("TIMESTAMP", "TEXT")
+    # replace VARCHAR and VARCHAR(n) with TEXT
+    query = re.sub(r"VARCHAR\(\d+\)", "TEXT", query)
+    return query
 
 
 class SchemaGenerator:
@@ -108,7 +112,7 @@ class SchemaGenerator:
                     f"FOREIGN KEY ({field_name}) REFERENCES {referenced_table}(id);\n"
                 )
                 relation_lines.append(foreign_key_constraint)
-                field_lines.append(f"    {field_name} INTEGER")
+                field_lines.append(f"    {field_name} VARCHAR(30)")
             elif isinstance(field_type, DatabaseField):
                 nullable = " NOT NULL" if field_type.nullable is False else ""
                 if field_type.index is True:
@@ -121,7 +125,12 @@ class SchemaGenerator:
                     field_type.primary_key is True
                     and field_type.auto_increment is False
                 ):
-                    field_lines.append(f"    {field_name} INTEGER PRIMARY KEY")
+                    if field_type.length is not None:
+                        field_lines.append(
+                            f"    {field_name} VARCHAR({field_type.length}) PRIMARY KEY"
+                        )
+                    else:
+                        field_lines.append(f"    {field_name} INTEGER PRIMARY KEY")
                 elif (
                     field_type.primary_key is True and field_type.auto_increment is True
                 ):

@@ -71,11 +71,9 @@ class Model:
     async def create(self, db):
         """Insert a new record in the database using the provided db context."""
         fields = self._get_fields()
-        columns = ", ".join(field for field in fields.keys() if field != "id")
-        placeholders = ", ".join([f"${i+1}" for i in range(len(fields) - 1)])
-        values = tuple(
-            self._values.get(field) for field in fields.keys() if field != "id"
-        )
+        columns = ", ".join(field for field in fields.keys())
+        placeholders = ", ".join([f"${i+1}" for i in range(len(fields))])
+        values = tuple(self._values.get(field) or None for field in fields.keys())
         query = f"INSERT INTO {self._get_table_name()} ({columns}) VALUES ({placeholders}) RETURNING id;"
 
         try:
@@ -156,12 +154,23 @@ class Model:
             return _values[name]
         return object.__getattribute__(self, name)
 
-    def as_dict(self):
+    def as_dict(self, include_private=False):
+        if include_private is True:
+            return {k: v for k, v in self._values.items()}
         return {
             k: v
             for k, v in self._values.items()
             if k not in PRIVATES[self.__class__.__name__]
         }
+
+    def as_dictionary(self):
+        return self.as_dict()
+
+    def to_dict(self):
+        return self.as_dict()
+
+    def dict(self):
+        return self.as_dict()
 
     def set(self, **kwargs):
         if not hasattr(self, "changed_fields"):

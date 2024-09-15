@@ -37,7 +37,7 @@ class RegisterValidator(BaseValidator):
             errors.append(
                 {
                     "field": field,
-                    "message": f"validationErrors.{field}IsMissing",
+                    "message": f"validationErrors.{field}Missing",
                 }
             )
         if self.receive_marketing and not self.email:
@@ -61,22 +61,27 @@ class RegisterValidator(BaseValidator):
 app.add_router(router)
 
 
-@router.get("/{str:username}")
-async def hello_world(request: Request, username: str):
+@router.get("/")
+async def hello_world(request: Request):
+    return b"Hello, World!"
+
+
+@router.get("/{username:str}")
+async def hello_world_create(request: Request, username: str):
     database = AsyncDatabase
     async with database("acme_corp", backend="postgresql") as db:
         user = await Users(
             name="John Smith", username=username, email_address="john@smith.site"
         ).create(db)
-        print(f"Created user: {user}")
-    return b"Hello, World! I just changed this file. I'm adding some more text to the text to see if we compress any text. I'm adding a lot more text to this because my hope is that if I make a very very very long response then we might actually be able to see some real results here."
+        request.logger.debug(f"Created user: {user}")
+    return user
 
 
-@router.get("/user/{id:int}")
-async def get_user(request: Request, id: int):
+@router.get("/user/{id:str}")
+async def get_user(request: Request, id: str):
     async with AsyncDatabase("acme_corp", backend="postgresql") as db:
         user = await Users.get(db, id=id)
-    return user.as_dict()
+    return user
 
 
 @router.post("/validate")
@@ -86,7 +91,7 @@ async def validate(request: Request):
 
 
 # Second router
-router_two = Router(name="two")
+router_two = Router(name="two", prefix="/two")
 
 
 app.add_router(router_two)

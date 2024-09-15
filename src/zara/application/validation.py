@@ -47,7 +47,7 @@ def validate(validator: Type[T] = None):
                 validation_class = validator(**request.query_parameters)
             elif request.method != "GET":
                 body = await request.body()
-                body_json = orjson.loads(body)
+                body_json = orjson.loads(body) if body else {}
                 validation_class = validator(**body_json)
             validation_errors = await validation_class.validate()
             if validation_errors:
