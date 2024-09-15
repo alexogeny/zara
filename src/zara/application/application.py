@@ -14,6 +14,7 @@ from zara.errors import (
     ResourceNotFoundError,
     ValidationError,
 )
+from zara.utilities.audit import create_audit_log
 from zara.utilities.context import Context
 from zara.utilities.database import AsyncDatabase
 
@@ -211,6 +212,13 @@ class ASGIApplication:
     def _attach_logger(self, logger):
         self.logger = logger
 
+    def _audit_listeners(self):
+        async def audit_listener(event: Event):
+            event.logger.debug(f"Auditing event: {event.data}")
+            await create_audit_log(event)
+
+        self._event_bus.register_listener("AuditEvent", Listener(audit_listener))
+
     def _check_duplicate_routes(self) -> List[str]:
         all_routes = [route for router in self.routers for route in router.routes]
         self.logger.info(all_routes)
@@ -239,7 +247,7 @@ class ASGIApplication:
             if handler:
                 request.t = self._i18n.get_translator("de")
                 async with AsyncDatabase("acme_corp", backend="postgresql") as db:
-                    with Context.context(db, request):
+                    with Context.context(db, request, self._event_bus):
                         try:
                             response = await handler(request, **params)
                         except Exception as e:

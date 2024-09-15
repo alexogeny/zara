@@ -1,7 +1,7 @@
 from typing import Any, Dict, get_type_hints
 
+from zara.application.events import Event
 from zara.errors import DuplicateResourceError, ResourceNotFoundError
-from zara.utilities.audit import audit_create
 from zara.utilities.context import Context
 
 from .fields import DatabaseField, HasMany
@@ -70,10 +70,10 @@ class Model:
         """Get the table name from the class name."""
         return cls.__name__.lower()
 
-    @audit_create
     async def create(self):
         """Insert a new record in the database using the provided db context."""
         db = Context.get_db()
+        request = Context.get_request()
         fields = self._get_fields()
         columns = ", ".join(field for field in fields.keys())
         placeholders = ", ".join([f"${i+1}" for i in range(len(fields))])
@@ -90,7 +90,14 @@ class Model:
             self._values["id"] = result[0]["id"]
         else:
             self._values["id"] = result[0][0]
-
+        event_bus = Context.get_event_bus()
+        if event_bus is not None:
+            event_bus.dispatch_event(
+                Event(
+                    "AuditEvent",
+                    {"model": self, "action_type": "create", "request": request},
+                )
+            )
         return self
 
     async def save(self, db):
