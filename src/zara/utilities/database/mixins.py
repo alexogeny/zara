@@ -38,6 +38,16 @@ if TYPE_CHECKING:
         pass
 
 
+class IdMixin:
+    id: Required[str] = DatabaseField(  # Base 57 timestamped uuid 4
+        auto_increment=False,
+        primary_key=True,
+        data_type=str,
+        length=30,
+        default=lambda: generate_lexicographical_uuid(),
+    )
+
+
 class AuditMixin:
     id: Required[str] = DatabaseField(  # Base 57 timestamped uuid 4
         auto_increment=False,

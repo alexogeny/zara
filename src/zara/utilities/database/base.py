@@ -1,6 +1,8 @@
 from typing import Any, Dict, get_type_hints
 
 from zara.errors import DuplicateResourceError, ResourceNotFoundError
+from zara.utilities.audit import audit_create
+from zara.utilities.context import Context
 
 from .fields import DatabaseField, HasMany
 
@@ -68,8 +70,10 @@ class Model:
         """Get the table name from the class name."""
         return cls.__name__.lower()
 
-    async def create(self, db):
+    @audit_create
+    async def create(self):
         """Insert a new record in the database using the provided db context."""
+        db = Context.get_db()
         fields = self._get_fields()
         columns = ", ".join(field for field in fields.keys())
         placeholders = ", ".join([f"${i+1}" for i in range(len(fields))])
