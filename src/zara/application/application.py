@@ -293,7 +293,7 @@ class ASGIApplication:
                 request.t = self._i18n.get_translator("de")
                 x_subdomain = await self.get_x_subdomain(request)
                 async with AsyncDatabase(x_subdomain, backend="postgresql") as db:
-                    with Context.context(db, request, self._event_bus):
+                    with Context.context(db, request, self._event_bus, x_subdomain):
                         try:
                             response = await handler(request, **params)
                         except Exception as e:

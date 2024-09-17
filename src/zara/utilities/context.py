@@ -7,6 +7,7 @@ class Context:
     _db = contextvars.ContextVar("db")
     _request = contextvars.ContextVar("request")
     _event_bus = contextvars.ContextVar("event_bus")
+    _customer = contextvars.ContextVar("customer")
 
     @classmethod
     def set_db(cls, db: Any):
@@ -33,14 +34,24 @@ class Context:
         return cls._event_bus.get(None)
 
     @classmethod
+    def set_customer(cls, customer: Any):
+        cls._customer.set(customer)
+
+    @classmethod
+    def get_customer(cls):
+        return cls._customer.get(None)
+
+    @classmethod
     @contextlib.contextmanager
-    def context(cls, db, request, event_bus):
+    def context(cls, db, request, event_bus, customer):
         token_db = cls._db.set(db)
         token_request = cls._request.set(request)
         token_event_bus = cls._event_bus.set(event_bus)
+        token_customer = cls._customer.set(customer)
         try:
             yield
         finally:
             cls._db.reset(token_db)
             cls._request.reset(token_request)
             cls._event_bus.reset(token_event_bus)
+            cls._customer.reset(token_customer)
