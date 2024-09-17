@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 
 class IdMixin:
-    id: Required[str] = DatabaseField(  # Base 57 timestamped uuid 4
+    id: Required[str] = DatabaseField(
         auto_increment=False,
         primary_key=True,
         data_type=str,
@@ -49,7 +49,7 @@ class IdMixin:
 
 
 class AuditMixin:
-    id: Required[str] = DatabaseField(  # Base 57 timestamped uuid 4
+    id: Required[str] = DatabaseField(
         auto_increment=False,
         primary_key=True,
         data_type=str,
@@ -102,6 +102,14 @@ class UsersMixin(AuditMixin):
     # role: HasOne["Role"] = HasOne["Role"]
     openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
     openid_username: Optional[str] = DatabaseField(nullable=True)
+    token_secret: Optional[str] = DatabaseField(
+        auto_increment=False,
+        primary_key=False,
+        data_type=str,
+        length=30,
+        default=lambda: generate_lexicographical_uuid(),
+        private=True,
+    )
 
 
 class SessionMixin:

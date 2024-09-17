@@ -1,4 +1,3 @@
-import aiosqlite
 import asyncpg
 
 from zara.utilities.database.migrations import MigrationManager
@@ -18,21 +17,24 @@ class AsyncDatabase:
 
     async def connect(self):
         """Establish the connection to the database."""
-        if self.backend == "sqlite":
-            self.connection = await aiosqlite.connect(f"{self.db_name}.db")
-            await self._ensure_sqlite_file_exists()
-        elif self.backend == "postgresql":
-            self.connection = await asyncpg.connect(self.db_url)
-            await self._ensure_schema_exists()
-            await self.connection.execute(f"SET search_path TO {self.db_name};")
-        else:
-            raise ValueError(f"Unsupported backend: {self.backend}")
+        self.connection = await asyncpg.connect(self.db_url)
+        await self._ensure_schema_exists()
+        await self.connection.execute(f"SET search_path TO {self.db_name};")
         await MigrationManager().apply_pending_migrations(self)
 
     async def _create_psql_public_databases(self):
         await self.connection.execute(
             "CREATE TABLE IF NOT EXISTS public.databases (schema_name TEXT PRIMARY KEY);"
         )
+
+    async def execute_in_public(self, statement):
+        """Execute a statement in the public schema or database."""
+        await self.connection.execute("SET search_path TO public;")
+        try:
+            result = await self.connection.execute(statement)
+        finally:
+            await self.connection.execute(f"SET search_path TO {self.db_name};")
+        return result
 
     async def _ensure_schema_exists(self):
         """Ensures that the schema exists in PostgreSQL, and if not, creates it."""
@@ -48,22 +50,9 @@ class AsyncDatabase:
                 "INSERT INTO public.databases (schema_name) VALUES ($1)", self.db_name
             )
 
-    async def _ensure_sqlite_file_exists(self):
-        """Ensures that the SQLite file exists and registers it."""
-        async with aiosqlite.connect("public_registry.db") as conn:
-            await conn.execute(
-                "CREATE TABLE IF NOT EXISTS databases (name TEXT PRIMARY KEY);"
-            )
-            await conn.execute(
-                "INSERT OR IGNORE INTO databases (name) VALUES (?);", (self.db_name,)
-            )
-            await conn.commit()
-
     async def disconnect(self):
         """Close the database connection."""
         if self.connection:
-            if self.backend == "sqlite":
-                await self.connection.commit()
             await self.connection.close()
 
     # Implement the asynchronous context manager protocol

@@ -85,11 +85,11 @@ class AlterTable(SQLStatement):
 # Function to parse SQL statements
 def parse_sql_statements(sql_content: str) -> List[SQLStatement]:
     # Patterns to match SQL statements
-    drop_pattern = r"DROP\s+TABLE\s+IF\s+EXISTS\s+(\w+);"
-    create_pattern = r"CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);"
-    alter_pattern = r"ALTER\s+TABLE\s+(\w+)\s+(.*?);"
+    drop_pattern = r"DROP\s+TABLE\s+IF\s+EXISTS\s+([\w\.]+);"
+    create_pattern = r"CREATE\s+TABLE\s+([\w\.]+)\s*\((.*?)\);"
+    alter_pattern = r"ALTER\s+TABLE\s+([\w\.]+)\s+(.*?);"
     create_index_pattern = (
-        r"CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+(\w+)\s*\((.*?)\);"
+        r"CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+([\w\.]+)\s*\((.*?)\);"
     )
 
     statements = []

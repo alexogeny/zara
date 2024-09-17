@@ -87,13 +87,18 @@ class Model:
     def _get_table_name(cls):
         """Get the table name from the class name."""
         if cls._check_if_public():
-            name = cls.__name__.lower()
-            if name.startswith("public"):
-                name = name[6:]
-            return f"public.{name}"
+            return f"public.{cls.__name__.lower()}"
         return cls.__name__.lower()
 
-    async def create(self):
+    @staticmethod
+    def _get_public_table_name_for_querying(table_name):
+        if table_name.startswith("public."):
+            table_name = table_name.replace("public.", "")
+        if table_name.startswith("public"):
+            table_name = table_name[6:]
+        return table_name
+
+    async def create(self, public=False):
         """Insert a new record in the database using the provided db context."""
         db = Context.get_db()
         request = Context.get_request()
@@ -101,19 +106,38 @@ class Model:
         columns = ", ".join(field for field in fields.keys())
         placeholders = ", ".join([f"${i+1}" for i in range(len(fields))])
         values = tuple(self._values.get(field) or None for field in fields.keys())
-        query = f"INSERT INTO {self._get_table_name()} ({columns}) VALUES ({placeholders}) RETURNING id;"
+        table_name = self._get_table_name()
+        # if all the values are none
+        has_values = [v for v in values if v is not None]
+        if has_values:
+            if public:
+                table_name = self._get_public_table_name_for_querying(table_name)
+                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) RETURNING *;"
+            else:
+                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) RETURNING id;"
+        else:
+            # Insert with default values
+            if public:
+                table_name = self._get_public_table_name_for_querying(table_name)
+                query = f"INSERT INTO {table_name} DEFAULT VALUES RETURNING *;"
+            else:
+                query = f"INSERT INTO {table_name} DEFAULT VALUES RETURNING id;"
 
         try:
-            result = await self._execute(db, query, values)
+            result = await self._execute(
+                db, query, values if has_values else [], public=public
+            )
         except Exception as e:
             if "duplicate key value violates unique constraint" in str(e):
                 raise DuplicateResourceError(f"Duplicate resource found: {self}")
             raise e
-        if db.backend == "postgresql":
-            self._values["id"] = result[0]["id"]
+
+        if not has_values:
+            self._values.update(result[0])
         else:
-            self._values["id"] = result[0][0]
-        if self.should_audit:
+            self._values["id"] = result[0]["id"]
+
+        if self.should_audit and not public:
             event_bus = Context.get_event_bus()
             if event_bus is not None:
                 event_bus.dispatch_event(
@@ -122,7 +146,11 @@ class Model:
                         {
                             "model": self,
                             "request": request,
-                            "meta": ModelWithDict(action_type="create"),
+                            "meta": ModelWithDict(
+                                action_type="create",
+                                object_type=self.__class__.__name__,
+                                customer=Context.get_customer(),
+                            ),
                         },
                     )
                 )
@@ -158,7 +186,11 @@ class Model:
                         {
                             "model": self,
                             "request": request,
-                            "meta": ModelWithDict(action_type="update"),
+                            "meta": ModelWithDict(
+                                action_type="update",
+                                object_type=self.__class__.__name__,
+                                customer=Context.get_customer(),
+                            ),
                         },
                     )
                 )
@@ -167,22 +199,62 @@ class Model:
     async def get(cls, **kwargs):
         """Retrieve a record from the database."""
         table_name = cls._get_table_name()
+        is_public = cls._check_if_public()
         where_clause = " AND ".join(
             [f"{key} = ${i+1}" for i, key in enumerate(kwargs.keys())]
         )
         values = tuple(kwargs.values())
 
-        query = f"SELECT * FROM {table_name} WHERE {where_clause} LIMIT 1;"
+        query = f"SELECT * FROM {table_name if not is_public else table_name.replace('public.', '')} WHERE {where_clause} LIMIT 1;"
         db = Context.get_db()
-        result = await cls._execute(db, query, values)
+        result = await cls._execute(db, query, values, public=is_public)
         if result:
-            if db.backend == "postgresql":
-                return cls(**result[0])
-            return cls(**dict(zip(cls._columns(), result[0])))
+            return cls(**result[0])
         filters = {f"{k}={v}" for k, v in kwargs.items()}
         raise ResourceNotFoundError(
             f"Result not found for criteria: {' '.join(filters)}"
         )
+
+    @classmethod
+    async def first(cls, logger, throws=True):
+        """Retrieve the first record."""
+        db = Context.get_db()
+        if not cls._check_if_public():
+            logger.error("running in private")
+            result = await cls._execute(
+                db, "SELECT * FROM {} LIMIT 1;".format(cls._get_table_name()), []
+            )
+        else:
+            tbl = cls._get_public_table_name_for_querying(cls._get_table_name())
+            logger.error(f"tbl: {tbl}")
+            result = await cls._execute(
+                db,
+                "SELECT * FROM public.{} LIMIT 1;".format(tbl),
+                [],
+                public=True,
+            )
+
+        logger.error(f"result: {result}")
+        if result and str(result) != "SELECT 0":
+            return cls(**result[0])
+        if throws:
+            raise ResourceNotFoundError("Result not found.")
+        return None
+
+    @classmethod
+    async def first_or_create(cls, logger, **kwargs):
+        """Retrieve the first record or create it."""
+        logger.error("running get first")
+        instance = await cls.first(logger, throws=False)
+        if instance:
+            logger.error(f"got instance: {instance}")
+            return instance, False
+        logger.error(f"running create since we didnt find it: {kwargs}")
+        new_cls = cls(**kwargs)
+        if new_cls._check_if_public():
+            logger.error(f"the values: {new_cls._values}")
+            return await new_cls.create(public=True), True
+        return await new_cls.create(), True
 
     @classmethod
     async def get_or_create(cls, db, **kwargs):
@@ -193,13 +265,15 @@ class Model:
         return await cls(**kwargs).create(db), True
 
     @classmethod
-    async def _execute(cls, db, query, values):
+    async def _execute(cls, db, query, values, public=False):
         """Helper method to execute a query using the provided db context."""
-        if db.backend == "sqlite":
-            async with db.connection.execute(query, values) as cursor:
-                return await cursor.fetchall()
-        elif db.backend == "postgresql":
+        if public is True:
+            if values:
+                return await db.execute_in_public(query, *values)
+            return await db.execute_in_public(query)
+        if values:
             return await db.connection.fetch(query, *values)
+        return await db.connection.fetch(query)
 
     def __repr__(self):
         """String representation of the model."""

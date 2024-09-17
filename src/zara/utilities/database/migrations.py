@@ -2,8 +2,6 @@ import datetime
 import hashlib
 import inspect
 import os
-import re
-import sqlite3
 from typing import List
 from typing import Optional as TypingOptional
 
@@ -19,15 +17,6 @@ from .fields import (
     Required,
 )
 from .sqllex import AlterTable, DropTable, compare_sql_statements, parse_sql_statements
-
-
-def translate_pgsql_to_sqlite(query):
-    query = query.replace(
-        "SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT"
-    ).replace("TIMESTAMP", "TEXT")
-    # replace VARCHAR and VARCHAR(n) with TEXT
-    query = re.sub(r"VARCHAR\(\d+\)", "TEXT", query)
-    return query
 
 
 class SchemaGenerator:
@@ -313,116 +302,72 @@ class MigrationManager:
         migration_sql_statements = parse_sql_statements(migration_sql)
         migration_hash = self.get_migration_hash(migration_file)
         print(f"RUnning migration: {migration_file} ({migration_hash})")
+
+        public_statements = []
+        private_statements = []
+
         for statement in migration_sql_statements:
-            print(statement)
-            if isinstance(statement, AlterTable):
-                if statement.constraint and statement.parent_table:
-                    try:
-                        await db.connection.execute(statement.raw)
-                    except sqlite3.OperationalError:
-                        temp = await db.connection.execute(
-                            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{statement.table_name}';"
-                        )
-                        table_sql = await temp.fetchone()
-                        table_sql = (
-                            table_sql[0][:-2]
-                            + f",\n    FOREIGN KEY ({statement.column}) REFERENCES {statement.parent_table}({statement.parent_field})\n);"
-                        )
-
-                        await db.connection.execute(
-                            f"CREATE TEMPORARY TABLE temporary AS SELECT * FROM {statement.table_name};"
-                        )
-                        await db.connection.execute(
-                            f"DROP TABLE {statement.table_name};"
-                        )
-                        await db.connection.execute(table_sql)
-                        await db.connection.execute(
-                            f"INSERT INTO {statement.table_name} SELECT * FROM temporary;"
-                        )
-                        await db.connection.execute("DROP TABLE temporary;")
-                elif statement.operation.startswith(
-                    "ADD"
-                ) or statement.operation.startswith("DROP"):
-                    try:
-                        await db.connection.execute(statement.raw)
-                    except sqlite3.OperationalError as e:
-                        if "unknown column" in str(
-                            e
-                        ) and "foreign key definition" in str(e):
-                            print("need to drop fk constraint first")
-                            column_to_drop = statement.operation.replace(
-                                "DROP COLUMN ", ""
-                            )
-                            temp = await db.connection.execute(
-                                f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{statement.table_name}';"
-                            )
-                            table_sql = await temp.fetchone()
-                            table_sql_lines = table_sql[0].split("\n")
-                            table_sql_lines = [
-                                line
-                                for line in table_sql_lines
-                                if not line.startswith(
-                                    f"    FOREIGN KEY ({column_to_drop}) REFERENCES"
-                                )
-                            ]
-                            await db.connection.execute(
-                                f"CREATE TEMPORARY TABLE temporary AS SELECT * FROM {statement.table_name};"
-                            )
-                            await db.connection.execute(
-                                f"DROP TABLE {statement.table_name};"
-                            )
-                            if table_sql_lines[-1] == ")" and table_sql_lines[
-                                -2
-                            ].endswith(","):
-                                table_sql_lines[-2] = table_sql_lines[-2][:-1]
-                            await db.connection.execute("\n".join(table_sql_lines))
-                            await db.connection.execute(
-                                f"INSERT INTO {statement.table_name} SELECT * FROM temporary;"
-                            )
-                            await db.connection.execute("DROP TABLE temporary;")
-                            await db.connection.execute(statement.raw)
-
+            # TODO: crude check, add nuance later
+            if "public." in statement.raw:
+                public_statements.append(statement)
             else:
-                to_apply = statement.raw
-                if db.backend == "sqlite":
-                    to_apply = translate_pgsql_to_sqlite(to_apply)
-                await db.connection.execute(to_apply)
-        await db.connection.execute(
-            f"INSERT INTO migrations (migration_hash) VALUES ('{migration_hash}');"
-        )
-        if db.backend == "sqlite":
-            await db.connection.commit()
+                private_statements.append(statement)
+
+        if public_statements:
+            public_applied = await self.check_migration_applied(
+                db, migration_hash, public=True
+            )
+            if not public_applied:
+                for statement in public_statements:
+                    public_without_prefix = statement.raw.replace("public.", "")
+                    print(f"Executing public statement: {public_without_prefix}")
+                    await db.execute_in_public(public_without_prefix)
+                await db.execute_in_public(
+                    f"INSERT INTO migrations (migration_hash) VALUES ('{migration_hash}');"
+                )
+
+        schema_applied = await self.check_migration_applied(db, migration_hash)
+        if not schema_applied:
+            for statement in private_statements:
+                print(f"Executing private statement: {statement.raw}")
+
+                if isinstance(statement, AlterTable):
+                    if statement.constraint and statement.parent_table:
+                        await db.connection.execute(statement.raw)
+                    elif statement.operation.startswith(
+                        "ADD"
+                    ) or statement.operation.startswith("DROP"):
+                        await db.connection.execute(statement.raw)
+
+                else:
+                    to_apply = statement.raw
+                    await db.connection.execute(to_apply)
+            await db.connection.execute(
+                f"INSERT INTO migrations (migration_hash) VALUES ('{migration_hash}');"
+            )
+
+    async def check_migration_applied(self, db, migration_hash, public=False):
+        """Check if a migration has been applied."""
+        if public:
+            await db.execute_in_public(
+                "CREATE TABLE IF NOT EXISTS migrations (id SERIAL PRIMARY KEY, migration_hash TEXT NOT NULL UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+            )
+            result = await db.execute_in_public(
+                f"SELECT * FROM migrations WHERE migration_hash = '{migration_hash}';"
+            )
+        else:
+            await db.connection.execute(
+                "CREATE TABLE IF NOT EXISTS migrations (id SERIAL PRIMARY KEY, migration_hash TEXT NOT NULL UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+            )
+            result = await db.connection.fetch(
+                f"SELECT 1 FROM migrations WHERE migration_hash = '{migration_hash}';"
+            )
+
+        return bool(result)
 
     async def apply_pending_migrations(self, db):
         """Apply any pending migrations that haven't been applied for this customer."""
-        migration_sql = (
-            "CREATE TABLE IF NOT EXISTS migrations ("
-            "id SERIAL PRIMARY KEY, "
-            "migration_hash TEXT NOT NULL UNIQUE, "
-            "applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
-        )
-        if db.backend == "sqlite":
-            migration_sql = translate_pgsql_to_sqlite(migration_sql)
-
-        await db.connection.execute(migration_sql)
-
-        if db.backend == "sqlite":
-            result = await db.connection.execute(
-                "SELECT migration_hash FROM migrations;"
-            )
-            applied_migrations = await result.fetchall()
-            applied_migration_hashes = [m[0] for m in applied_migrations]
-        elif db.backend == "postgresql":
-            applied_migrations = await db.connection.fetch(
-                "SELECT migration_hash FROM migrations;"
-            )
-            applied_migration_hashes = {
-                row["migration_hash"] for row in applied_migrations
-            }
-
         migration_files = self.get_migration_files()
 
         for migration_file in migration_files:
-            migration_hash = self.get_migration_hash(migration_file)
-            if migration_hash not in applied_migration_hashes:
-                await self.apply_migration(db, migration_file)
+            await self.apply_migration(db, migration_file)
