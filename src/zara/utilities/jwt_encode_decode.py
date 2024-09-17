@@ -3,15 +3,20 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import ssl
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Dict
 
+import argon2
+import orjson
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+from zara.utilities.context import Context
 
 
 def load_rsa_public_key(jwk: dict):
@@ -114,7 +119,7 @@ def create_refresh_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-async def get_keycloak_token(
+async def get_token_from_openid_provider(
     username: str, password: str, logger, endpoint_config: dict = None
 ) -> dict:
     """
@@ -170,6 +175,83 @@ async def get_keycloak_token(
             return json.loads(response.read().decode())
 
     return await fetch_token()
+
+
+ph = argon2.PasswordHasher()
+
+
+def create_password(plain_password, salt=None):
+    # Generate a random salt if not provided
+    if salt is None:
+        salt = os.urandom(16)  # Generate a 16-byte random salt
+
+    # Use the low-level hash_secret function with a custom salt
+    hashed_password = ph.hash(
+        plain_password.encode("utf-8"),  # The plain password
+        salt,  # The custom salt
+        time_cost=2,  # The time cost (number of iterations)
+        memory_cost=102400,  # The memory cost
+        parallelism=8,  # The number of parallel threads
+        hash_len=32,  # The length of the hash
+        type=argon2.Type.I,  # The Argon2 variant
+    )
+    return hashed_password, salt
+
+
+def verify_password(hashed_password, plain_password, salt):
+    # Hash the plain password with the provided salt
+    new_hash = ph.hash(
+        plain_password.encode("utf-8"),
+        salt,
+        time_cost=2,
+        memory_cost=102400,
+        parallelism=8,
+        hash_len=32,
+        type=argon2.Type.I,
+    )
+
+    # Verify if the newly hashed password matches the original hash
+    return hashed_password == new_hash
+
+
+async def get_token_from_local_system(
+    password: str,
+    user=None,
+    tenant_secret: str = None,
+    public_secret: str = None,
+):
+    """
+    Here we check that the password matches the hash stored against the user with argon2
+    Then we generate a JWT and return it using:
+    public secret + tenant configuration secret + user secret
+    """
+    if not user:
+        return {"error": "User not found"}, 404
+    user_secret = user.token_secret
+    salt = f"{public_secret}{tenant_secret}{user_secret}".encode("utf-8")
+
+    if not verify_password(user.password_hash, password, salt):
+        return {"error": "Invalid password"}, 401
+
+    payload = {
+        "username": user.username,
+        "roles": user.roles,
+        "permissions": user.permissions,
+        "iss": "self",
+    }
+    header = {"alg": "HS256", "typ": "JWT"}
+    header_bytes = orjson.dumps(header, separators=(",", ":"))
+    payload_bytes = orjson.dumps(payload, separators=(",", ":"))
+
+    signature = hmac.new(
+        salt,
+        f"{header_bytes}.{payload_bytes}".encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    signature_encoded = base64.urlsafe_b64encode(signature)
+    jwt_token = f"{header_bytes}.{payload_bytes}.{signature_encoded}"
+
+    return {"access_token": jwt_token, "token_type": "Bearer"}
 
 
 async def fetch_openid_configuration(issuer_url: str):
@@ -254,60 +336,52 @@ def base64url_decode(input):
     return base64.urlsafe_b64decode(input)
 
 
-async def verify_jwt(token: str) -> dict:
+async def verify_jwt(token: str, secret: str = SECRET_KEY) -> dict:
     """
     Verifies the JWT signature.
     If the `iss` is "self", verify it locally using the internal secret.
     Otherwise, verify it using the issuer's public key.
     """
-    # Check if the token is already cached
     cached_payload = get_cached_jwt(token)
-    print(cached_payload)
     if cached_payload:
         return cached_payload
 
     try:
-        # Decode the JWT
         header_b64, payload_b64, signature_b64 = token.split(".")
         header = json.loads(base64url_decode(header_b64).decode("utf-8"))
         payload = json.loads(base64url_decode(payload_b64).decode("utf-8"))
 
-        # Check the issuer
         iss = payload.get("iss", None)
         if not iss:
             raise ValueError("JWT is missing 'iss' claim")
 
+        db = Context.get_db()
+
         if iss == "self":
-            # Locally signed token, verify with internal secret
-            if not verify_signature(header_b64, payload_b64, signature_b64, SECRET_KEY):
+            if not verify_signature(
+                header_b64, payload_b64, signature_b64, secret=secret
+            ):
                 raise ValueError("Invalid JWT signature for self-issued token")
             # TODO: also check if exp is hit
             # TODO: if a refresh token is given, generate and sign a new payload and return it
         else:
-            # Externally issued token, fetch public key from issuer and verify
             openid_config = await fetch_openid_configuration(iss)
             jwks_uri = openid_config["jwks_uri"]
 
-            # Fetch public key
             kid = header.get("kid", None)
             if not kid:
                 raise ValueError("JWT is missing 'kid' in header")
-            # Check if the public key is cached
             public_key = get_cached_public_key(kid)
             if public_key is None:
-                print("setting key in cache")
-                # If the public key is not cached, fetch and cache it
                 jwk = await fetch_public_key(jwks_uri, kid)
                 public_key = load_rsa_public_key(jwk)
                 cache_public_key(kid, public_key)
 
-            # Verify the RS256 signature using the public key
             if not verify_rs256_signature(
                 header_b64, payload_b64, signature_b64, public_key
             ):
                 raise ValueError("Invalid JWT signature for external token")
 
-        # Cache the payload for future use
         cache_jwt(token, payload)
 
         return payload
