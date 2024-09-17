@@ -13,8 +13,18 @@ from zara.application.validation import (
 )
 from zara.asgi.server import ASGIServer
 from zara.errors import UnauthenticatedError
-from zara.utilities.database.models.configuration_model import OpenIDProvider
-from zara.utilities.jwt_encode_decode import get_keycloak_token
+from zara.utilities.database.models.configuration_model import (
+    Configuration,
+    OpenIDProvider,
+)
+from zara.utilities.database.models.public_configuration_model import (
+    PublicConfiguration,
+)
+from zara.utilities.jwt_encode_decode import (
+    create_password,
+    get_token_from_local_system,
+    get_token_from_openid_provider,
+)
 
 SECRET_KEY = "your_application_secret"
 ALGORITHM = "HS256"
@@ -69,11 +79,25 @@ async def hello_world(request: Request):
     return b"Hello, World!"
 
 
-@router.get("/{username:str}")
+@router.post("/user/create/{username:str}")
 async def hello_world_create(request: Request, username: str):
     user = await Users(
-        name="John Smith", username=username, email_address="john@smith.site"
+        name="John Smith",
+        username=username,
+        email_address="john@smith.site",
     ).create()
+    request.logger.warning(f"Created user: {user}")
+    tenant_entry, _ = await Configuration.first_or_create(request.logger)
+    tenant_secret = tenant_entry.token_secret
+    request.logger.warning(f"tenant secret: {tenant_secret}")
+    public_entry, _ = await PublicConfiguration.first_or_create(request.logger)
+    public_secret = public_entry.token_secret
+    request.logger.warning(f"public secret: {public_secret}")
+    password = create_password(
+        "password", f"{public_secret}{tenant_secret}{user.token_secret}".encode("utf-8")
+    )
+    user.password_hash = password[0]
+    user.save()
     request.logger.debug(f"Created user: {user}")
     return user
 
@@ -155,22 +179,29 @@ async def login(request: Request):
             "token_url": openid_provider.issuer.replace("localhost", "keycloak"),
         }
 
-    try:
-        token_response = await get_keycloak_token(
-            user.openid_username or username,
-            password,
-            request.logger,
-            endpoint_config=config,
+        try:
+            token_response = await get_token_from_openid_provider(
+                user.openid_username or username,
+                password,
+                request.logger,
+                endpoint_config=config,
+            )
+            if "error" in token_response:
+                return {"error": token_response["error_description"]}, 401
+            request.set_cookie("refreshToken", token_response["refresh_token"])
+            return {
+                "access_token": token_response["access_token"],
+                "token_type": "Bearer",
+            }
+        except Exception as e:
+            if "401" in str(e):
+                raise UnauthenticatedError()
+            else:
+                request.logger.error(e)
+    else:  # local system login
+        token_response = await get_token_from_local_system(
+            username, password, request.logger
         )
-        if "error" in token_response:
-            return {"error": token_response["error_description"]}, 401
-        request.set_cookie("refreshToken", token_response["refresh_token"])
-        return {"access_token": token_response["access_token"], "token_type": "Bearer"}
-    except Exception as e:
-        if "401" in str(e):
-            raise UnauthenticatedError()
-        else:
-            request.logger.error(e)
 
 
 @router_two.get("/greet")
