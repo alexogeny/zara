@@ -19,29 +19,30 @@ async def create_audit_log(event: Event):
     if actor_id is None:
         is_system = True
     object_id = event.data["model"]["id"]
-    object_type = event.data["model"].__class__.__name__
+    object_type = event.data["meta"]["object_type"]
 
     where = (
-        request["headers"].get("X-Real-IP")
-        or request["headers"].get("X-Forwarded-For")
-        or ""
-    )
+        request["headers"].get(b"X-Real-IP")
+        or request["headers"].get(b"X-Forwarded-For")
+        or b""
+    ).decode("utf-8")
 
+    object_action = event.data["meta"]["action_type"]
     audit_log = AuditLog(
         should_audit=False,
         actor_id=actor_id,
         object_id=object_id,
         object_type=object_type,
-        event_name=f"{object_type}CreatedEvent",
-        description=f"New {object_type} created",
-        action=f"Created {object_type}",
-        action_type=event.data["meta"]["action_type"],
+        event_name=f"{object_type}{object_action.title()}Event",
+        description=f"New {object_type} {object_action}",
         at=datetime.now(tz=timezone.utc).replace(tzinfo=None),
         loc=where or "unknown",
         is_system=is_system,
         change_snapshot="_",
     )
 
-    async with AsyncDatabase("acme_corp", backend="postgresql") as db:
-        with Context.context(db, request, None):
+    async with AsyncDatabase(
+        event.data["meta"]["customer"], backend="postgresql"
+    ) as db:
+        with Context.context(db, request, None, event.data["meta"]["customer"]):
             await audit_log.create()
