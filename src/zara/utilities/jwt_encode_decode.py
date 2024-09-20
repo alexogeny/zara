@@ -188,12 +188,7 @@ def create_password(plain_password, salt=None):
     # Use the low-level hash_secret function with a custom salt
     hashed_password = ph.hash(
         plain_password.encode("utf-8"),  # The plain password
-        salt,  # The custom salt
-        time_cost=2,  # The time cost (number of iterations)
-        memory_cost=102400,  # The memory cost
-        parallelism=8,  # The number of parallel threads
-        hash_len=32,  # The length of the hash
-        type=argon2.Type.I,  # The Argon2 variant
+        salt=salt,  # The custom salt
     )
     return hashed_password, salt
 
@@ -202,12 +197,7 @@ def verify_password(hashed_password, plain_password, salt):
     # Hash the plain password with the provided salt
     new_hash = ph.hash(
         plain_password.encode("utf-8"),
-        salt,
-        time_cost=2,
-        memory_cost=102400,
-        parallelism=8,
-        hash_len=32,
-        type=argon2.Type.I,
+        salt=salt,
     )
 
     # Verify if the newly hashed password matches the original hash
