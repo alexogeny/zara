@@ -307,10 +307,20 @@ class Model:
     def dict(self):
         return self.as_dict()
 
-    def set(self, **kwargs):
+    def __setattr__(self, name, value):
         if not hasattr(self, "changed_fields"):
             object.__setattr__(self, "changed_fields", [])
+
+        if hasattr(self, "_values") and name in self._get_fields():
+            self._values[name] = value
+            if name not in self.changed_fields:
+                self.changed_fields.append(name)
+        else:
+            object.__setattr__(self, name, value)
+
+    def set(self, **kwargs):
         for name, value in kwargs.items():
+            setattr(self, name, value)
             if hasattr(self, "_values") and name in self._get_fields():
                 self._values[name] = value
                 # Add the field to changed_fields if not already tracked
