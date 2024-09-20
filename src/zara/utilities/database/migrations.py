@@ -279,8 +279,9 @@ class MigrationGenerator:
 
 
 class MigrationManager:
-    def __init__(self, migrations_path: str = "migrations"):
+    def __init__(self, migrations_path: str = "migrations", logger=None):
         self.migrations_path = migrations_path
+        self.logger = logger
 
     def get_migration_files(self) -> List[str]:
         """Retrieve the list of migration files."""
@@ -301,7 +302,6 @@ class MigrationManager:
             migration_sql = f.read()
         migration_sql_statements = parse_sql_statements(migration_sql)
         migration_hash = self.get_migration_hash(migration_file)
-        print(f"RUnning migration: {migration_file} ({migration_hash})")
 
         public_statements = []
         private_statements = []
@@ -355,6 +355,8 @@ class MigrationManager:
             result = await db.execute_in_public(
                 f"SELECT * FROM migrations WHERE migration_hash = '{migration_hash}';"
             )
+            if result == "SELECT 0":
+                return False
         else:
             await db.connection.execute(
                 "CREATE TABLE IF NOT EXISTS migrations (id SERIAL PRIMARY KEY, migration_hash TEXT NOT NULL UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
@@ -362,6 +364,8 @@ class MigrationManager:
             result = await db.connection.fetch(
                 f"SELECT 1 FROM migrations WHERE migration_hash = '{migration_hash}';"
             )
+            if result == "SELECT 0":
+                return False
 
         return bool(result)
 

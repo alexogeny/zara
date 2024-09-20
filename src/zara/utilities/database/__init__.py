@@ -27,11 +27,26 @@ class AsyncDatabase:
             "CREATE TABLE IF NOT EXISTS public.databases (schema_name TEXT PRIMARY KEY);"
         )
 
-    async def execute_in_public(self, statement):
+    async def execute_in_public(self, statement, *values):
         """Execute a statement in the public schema or database."""
         await self.connection.execute("SET search_path TO public;")
         try:
-            result = await self.connection.execute(statement)
+            if values:
+                result = await self.connection.execute(statement, *values)
+            else:
+                result = await self.connection.execute(statement)
+        finally:
+            await self.connection.execute(f"SET search_path TO {self.db_name};")
+        return result
+
+    async def fetch_in_public(self, statement, *values):
+        """Execute a statement in the public schema or database."""
+        await self.connection.execute("SET search_path TO public;")
+        try:
+            if values:
+                result = await self.connection.fetch(statement, *values)
+            else:
+                result = await self.connection.fetch(statement)
         finally:
             await self.connection.execute(f"SET search_path TO {self.db_name};")
         return result

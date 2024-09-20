@@ -86,19 +86,15 @@ async def hello_world_create(request: Request, username: str):
         username=username,
         email_address="john@smith.site",
     ).create()
-    request.logger.warning(f"Created user: {user}")
-    tenant_entry, _ = await Configuration.first_or_create(request.logger)
+    tenant_entry, _ = await Configuration.first_or_create()
     tenant_secret = tenant_entry.token_secret
-    request.logger.warning(f"tenant secret: {tenant_secret}")
-    public_entry, _ = await PublicConfiguration.first_or_create(request.logger)
+    public_entry, _ = await PublicConfiguration.first_or_create()
     public_secret = public_entry.token_secret
-    request.logger.warning(f"public secret: {public_secret}")
     password = create_password(
         "password", f"{public_secret}{tenant_secret}{user.token_secret}".encode("utf-8")
     )
     user.password_hash = password[0]
-    user.save()
-    request.logger.debug(f"Created user: {user}")
+    await user.save()
     return user
 
 
@@ -198,10 +194,17 @@ async def login(request: Request):
                 raise UnauthenticatedError()
             else:
                 request.logger.error(e)
-    else:  # local system login
+    else:
+        tenant_config = await Configuration.first()
+        public_config = await PublicConfiguration.first()
         token_response = await get_token_from_local_system(
-            username, password, request.logger
+            password,
+            user,
+            tenant_secret=tenant_config.token_secret,
+            public_secret=public_config.token_secret,
         )
+        if "access_token" not in token_response:
+            raise UnauthenticatedError()
 
 
 @router_two.get("/greet")

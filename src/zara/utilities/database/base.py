@@ -80,6 +80,18 @@ class Model:
         return fields
 
     @classmethod
+    def _get_default_values(cls):
+        """Get the default values from the class."""
+        defaults = {}
+        for key, value in cls.__dict__.items():
+            if isinstance(value, DatabaseField):
+                if value.default is not None:
+                    defaults[key] = (
+                        value.default() if callable(value.default) else value.default
+                    )
+        return defaults
+
+    @classmethod
     def _columns(cls):
         return (k for k in cls.__annotations__.keys() if not isinstance(k, HasMany))
 
@@ -116,16 +128,19 @@ class Model:
             else:
                 query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) RETURNING id;"
         else:
-            # Insert with default values
             if public:
                 table_name = self._get_public_table_name_for_querying(table_name)
-                query = f"INSERT INTO {table_name} DEFAULT VALUES RETURNING *;"
-            else:
-                query = f"INSERT INTO {table_name} DEFAULT VALUES RETURNING id;"
+            defaults = self._get_default_values()
+            placeholders = ", ".join(
+                [f"${i+1}" for i in range(len(list(defaults.values())))]
+            )
+            values = tuple(defaults.values())
+            query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) RETURNING *;"
+            has_values = True
 
         try:
             result = await self._execute(
-                db, query, values if has_values else [], public=public
+                db, query, values if has_values else (), public=public
             )
         except Exception as e:
             if "duplicate key value violates unique constraint" in str(e):
@@ -207,7 +222,7 @@ class Model:
 
         query = f"SELECT * FROM {table_name if not is_public else table_name.replace('public.', '')} WHERE {where_clause} LIMIT 1;"
         db = Context.get_db()
-        result = await cls._execute(db, query, values, public=is_public)
+        result = await cls._execute(db, query, values, public=is_public, fetch=True)
         if result:
             return cls(**result[0])
         filters = {f"{k}={v}" for k, v in kwargs.items()}
@@ -216,25 +231,23 @@ class Model:
         )
 
     @classmethod
-    async def first(cls, logger, throws=True):
+    async def first(cls, throws=True):
         """Retrieve the first record."""
         db = Context.get_db()
         if not cls._check_if_public():
-            logger.error("running in private")
             result = await cls._execute(
                 db, "SELECT * FROM {} LIMIT 1;".format(cls._get_table_name()), []
             )
         else:
             tbl = cls._get_public_table_name_for_querying(cls._get_table_name())
-            logger.error(f"tbl: {tbl}")
             result = await cls._execute(
                 db,
                 "SELECT * FROM public.{} LIMIT 1;".format(tbl),
                 [],
                 public=True,
+                fetch=True,
             )
 
-        logger.error(f"result: {result}")
         if result and str(result) != "SELECT 0":
             return cls(**result[0])
         if throws:
@@ -242,17 +255,13 @@ class Model:
         return None
 
     @classmethod
-    async def first_or_create(cls, logger, **kwargs):
+    async def first_or_create(cls, **kwargs):
         """Retrieve the first record or create it."""
-        logger.error("running get first")
-        instance = await cls.first(logger, throws=False)
+        instance = await cls.first(throws=False)
         if instance:
-            logger.error(f"got instance: {instance}")
             return instance, False
-        logger.error(f"running create since we didnt find it: {kwargs}")
         new_cls = cls(**kwargs)
         if new_cls._check_if_public():
-            logger.error(f"the values: {new_cls._values}")
             return await new_cls.create(public=True), True
         return await new_cls.create(), True
 
@@ -265,14 +274,22 @@ class Model:
         return await cls(**kwargs).create(db), True
 
     @classmethod
-    async def _execute(cls, db, query, values, public=False):
+    async def _execute(cls, db, query, values, public=False, fetch=False):
         """Helper method to execute a query using the provided db context."""
         if public is True:
             if values:
+                if fetch:
+                    return await db.fetch_in_public(query, *values)
                 return await db.execute_in_public(query, *values)
+            if fetch:
+                return await db.fetch_in_public(query)
             return await db.execute_in_public(query)
         if values:
+            if fetch:
+                return await db.connection.fetch(query, *values)
             return await db.connection.fetch(query, *values)
+        if fetch:
+            return await db.connection.fetch(query)
         return await db.connection.fetch(query)
 
     def __repr__(self):
