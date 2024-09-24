@@ -7,13 +7,13 @@ from zara.utilities.database.mixins import IdMixin
 
 if TYPE_CHECKING:
 
-    class Users:
+    class User:
         pass
 
 
 class AuditLog(Model, IdMixin):
     # actor_id: the user id that performed the action
-    actor_id: HasOne["Users"] = HasOne["Users"]
+    actor_id: HasOne["User"] = HasOne["User"]
     # object_id: the object that was acted upon
     object_id: Required[str] = DatabaseField(nullable=False, length=30)
     # object_type: the type of object that was acted upon (the table name)

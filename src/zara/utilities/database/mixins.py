@@ -7,6 +7,8 @@ from __future__ import annotations
 import datetime
 from typing import TYPE_CHECKING
 
+from zara.utilities.database.validators import validate_slug, validate_username
+
 from ..id57 import generate_lexicographical_uuid
 from .fields import (
     DatabaseField,
@@ -19,7 +21,7 @@ from .fields import (
 
 if TYPE_CHECKING:
 
-    class Users:
+    class User:
         pass
 
     class Settings:
@@ -36,6 +38,23 @@ if TYPE_CHECKING:
 
     class OpenIDProvider:
         pass
+
+    class Session:
+        pass
+
+
+def dumb_datetime():
+    return datetime.datetime.now(tz=datetime.timezone.utc).replace(tzinfo=None)
+
+
+def id_field():
+    return DatabaseField(
+        auto_increment=False,
+        primary_key=True,
+        data_type=str,
+        length=30,
+        default=lambda: generate_lexicographical_uuid(),
+    )
 
 
 class IdMixin:
@@ -58,25 +77,23 @@ class AuditMixin:
     )
 
     created_at: Required[datetime.datetime] = DatabaseField(
-        default=lambda: datetime.datetime.now(tz=datetime.timezone.utc).replace(
-            tzinfo=None
-        ),
+        default=lambda: dumb_datetime(),
         data_type=datetime.datetime,
         nullable=False,
     )
-    created_by: HasOne["Users"] = HasOne["Users"]
+    created_by: HasOne["User"] = HasOne["User"]
     updated_at: Optional[datetime.datetime] = None
-    updated_by: HasOne["Users"] = HasOne["Users"]
+    updated_by: HasOne["User"] = HasOne["User"]
     deleted_at: Optional[datetime.datetime] = None
-    deleted_by: HasOne["Users"] = HasOne["Users"]
+    deleted_by: HasOne["User"] = HasOne["User"]
 
 
 class SettingsMixin(AuditMixin):
     """Some basic settings to get started."""
 
-    user: HasOne["Users"] = HasOne["Users"]
+    user: HasOne["User"] = HasOne["User"]
     display_mode: Optional[str] = Default("system")  # light, dark, system, hi contrast
-    language: Optional[str] = "a language code e.g. en_AU or de"
+    language: Optional[str] = DatabaseField(default="en", nullable=False)
     theme: Optional[str] = "a theme, like blue or red"
     timezone: Optional[str] = "a timezone."
     reduced_motion: Optional[str] = Default("system")
@@ -95,11 +112,13 @@ class UsersMixin(AuditMixin):
     email_address: Required[str] = DatabaseField(nullable=False)
     age: Optional[int] = DatabaseField(data_type=int, default=0)
     name: Required[str] = DatabaseField(nullable=False)
-    username: Required[str] = DatabaseField(unique=True, index=True, nullable=False)
-    # settings: HasOne["Settings"] = HasOne["Settings"]
+    username: Required[str] = DatabaseField(
+        unique=True, index=True, nullable=False, validate=validate_username
+    )
+    settings: HasOne["Settings"] = HasOne["Settings"]
     is_admin: Optional[bool] = DatabaseField(data_type=bool, default=False)
     is_system: Optional[bool] = DatabaseField(data_type=bool, default=False)
-    # role: HasOne["Role"] = HasOne["Role"]
+    role: HasOne["Role"] = HasOne["Role"]
     openid_provider: HasOne["OpenIDProvider"] = HasOne["OpenIDProvider"]
     openid_username: Optional[str] = DatabaseField(nullable=True)
     token_secret: Optional[str] = DatabaseField(
@@ -110,36 +129,75 @@ class UsersMixin(AuditMixin):
         default=lambda: generate_lexicographical_uuid(),
         private=True,
     )
+    sessions: HasMany["Session"] = HasMany["Session"]
+
+    @property
+    def is_active(self):
+        now = dumb_datetime()
+        return self.sessions.where(
+            last_activity__isnull=False, revoked_at__isnull=True, expires_at__gt=now
+        ).any()
+
+    @property
+    def last_login(self):
+        now = dumb_datetime()
+
+        return (
+            self.sessions.where(last_activity__isnull=False, expires_at__gt=now)
+            .sort_by("created_at")
+            .last()
+            .created_at
+        )
+
+    @property
+    def last_activity(self):
+        now = dumb_datetime()
+
+        return (
+            self.sessions.where(last_activity__isnull=False, expires_at__gt=now)
+            .sort_by("last_activity")
+            .last()
+            .last_activity
+        )
 
 
-class SessionMixin:
-    user: HasOne["Users"] = HasOne["Users"]
-    access_token = None
-    refresh_token = None
-    expires_at: Optional[datetime.datetime] = None
-    last_active: Optional[datetime.datetime] = None
+class SessionMixin(IdMixin):
+    user: HasOne["User"] = HasOne["User"]
+    access_token = DatabaseField(nullable=False)
+    refresh_token = DatabaseField(nullable=False)
+    expires_at: Optional[datetime.datetime] = DatabaseField(nullable=True)
+    last_active: Optional[datetime.datetime] = DatabaseField(nullable=True)
+    ip_address: Optional[str] = DatabaseField(nullable=True)
+    revoked_at: Optional[datetime.datetime] = DatabaseField(nullable=True)
+    user_agent: Optional[str] = DatabaseField(nullable=True)
+    created_at: Required[datetime.datetime] = DatabaseField(
+        default=lambda: dumb_datetime(),
+        data_type=datetime.datetime,
+        nullable=False,
+    )
 
 
-class RoleMixin:
+class RoleMixin(AuditMixin):
     """Role-based access control that has a defined subset of permissions."""
 
-    name: Required[str] = None
-    is_custom: Optional[bool] = Default(False)
-    description: Required[str] = None
+    name: Required[str] = DatabaseField(nullable=False)
+    slug: Required[str] = DatabaseField(validate=validate_slug)
+    is_custom: Optional[bool] = DatabaseField(data_type=bool, default=False)
+    description: Required[str] = DatabaseField(nullable=False, data_type=str)
     role_permissions: HasMany["RolePermission"] = HasMany["RolePermission"]
 
 
-class PermissionMixin:
+class PermissionMixin(AuditMixin):
     """Permissions that form part of role-based access."""
 
-    name: Required[str] = None
-    slug: Required[str] = None
-    is_custom: Optional[bool] = Default(False)
-    description: Required[str] = None
+    name: Required[str] = DatabaseField(nullable=False)
+    slug: Required[str] = DatabaseField(validate=validate_slug)
+    is_custom: Optional[bool] = DatabaseField(data_type=bool, default=False)
+    description: Required[str] = DatabaseField(nullable=False, data_type=str)
     role_permissions: HasMany["RolePermission"] = HasMany["RolePermission"]
 
 
-class RolePermissionMixin:
+class RolePermissionMixin(AuditMixin):
     """Map table for linking roles and permissions."""
 
     role: HasOne["Role"] = HasOne["Role"]

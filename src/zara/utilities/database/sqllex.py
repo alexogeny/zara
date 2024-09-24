@@ -85,11 +85,11 @@ class AlterTable(SQLStatement):
 # Function to parse SQL statements
 def parse_sql_statements(sql_content: str) -> List[SQLStatement]:
     # Patterns to match SQL statements
-    drop_pattern = r"DROP\s+TABLE\s+IF\s+EXISTS\s+([\w\.]+);"
-    create_pattern = r"CREATE\s+TABLE\s+([\w\.]+)\s*\((.*?)\);"
-    alter_pattern = r"ALTER\s+TABLE\s+([\w\.]+)\s+(.*?);"
+    drop_pattern = r"DROP\s+TABLE\s+IF\s+EXISTS\s+([\"\w\.]+);"
+    create_pattern = r"CREATE\s+TABLE\s+([\"\w\.]+)\s*\((.*?)\);"
+    alter_pattern = r"ALTER\s+TABLE\s+([\"\w\.]+)\s+(.*?);"
     create_index_pattern = (
-        r"CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+([\w\.]+)\s*\((.*?)\);"
+        r"CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+([\"\w\.]+)\s*\((.*?)\);"
     )
 
     statements = []
@@ -116,7 +116,7 @@ def parse_sql_statements(sql_content: str) -> List[SQLStatement]:
                 r"ADD CONSTRAINT\s+(\w+)\s+FOREIGN KEY", operation, re.IGNORECASE
             )
             column_match = re.search(r"\((.*?)\)", operation)
-            reference_match = re.search(r"REFERENCES\s(\w+)\((\w+)\)", operation)
+            reference_match = re.search(r"REFERENCES\s([\"\w]+)\((\w+)\)", operation)
             if constraint_match and column_match:
                 constraint = constraint_match.group(1)
                 column = column_match.group(1)

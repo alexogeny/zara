@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from example_models.users_model import Users
+from example_models.users_model import User
 from zara.application.application import ASGIApplication, Request, Router
 from zara.application.authentication import auth_required
 from zara.application.events import Event
@@ -12,13 +12,13 @@ from zara.application.validation import (
     validate,
 )
 from zara.asgi.server import ASGIServer
-from zara.errors import UnauthenticatedError
+from zara.errors import ForbiddenError, NotFoundError, UnauthenticatedError
 from zara.utilities.database.models.configuration_model import (
     Configuration,
     OpenIDProvider,
 )
-from zara.utilities.database.models.public_configuration_model import (
-    PublicConfiguration,
+from zara.utilities.database.models.public_model import (
+    Configuration as PublicConfiguration,
 )
 from zara.utilities.jwt_encode_decode import (
     create_password,
@@ -81,14 +81,14 @@ async def hello_world(request: Request):
 
 @router.post("/user/create/{username:str}")
 async def hello_world_create(request: Request, username: str):
-    user = await Users(
+    user = await User(
         name="John Smith",
         username=username,
         email_address="john@smith.site",
     ).create()
     tenant_entry, _ = await Configuration.first_or_create()
     tenant_secret = tenant_entry.token_secret
-    public_entry, _ = await PublicConfiguration.first_or_create()
+    public_entry, _ = await Configuration.first_or_create()
     public_secret = public_entry.token_secret
     password = create_password(
         "password", f"{public_secret}{tenant_secret}{user.token_secret}".encode("utf-8")
@@ -100,7 +100,7 @@ async def hello_world_create(request: Request, username: str):
 
 @router.get("/user/{id:str}")
 async def get_user(request: Request, id: str):
-    user = await Users.get(id=id)
+    user = await User.get(id=id)
     return user
 
 
@@ -120,7 +120,7 @@ app.add_router(router_two)
 @router.post("/create-openid-provider")
 async def create_openid_provider(request: Request):
     data = await request.json()
-    user = await Users.get(username=data.get("username"))
+    user = await User.get(username=data.get("username"))
     if not user:
         return {"error": "User not found"}, 404
     if user.is_system:
@@ -135,23 +135,23 @@ async def create_openid_provider(request: Request):
     )
 
     await openid_provider.create()
-    return openid_provider.as_dict()
+    return openid_provider
 
 
 @router.post("/update-user")
 async def update_user(request: Request):
     data = await request.json()
-    user = await Users.get(username=data.get("username"))
+    user = await User.get(username=data.get("username"))
     if not user:
-        return {"error": "User not found"}, 404
+        raise NotFoundError("User not found")
     if user.is_system:
-        return {"error": "User is system"}, 403
+        raise ForbiddenError("User is system")
     user.set(
         openid_username=data.get("openid_username"),
         openid_provider=data.get("openid_provider"),
     )
     await user.save()
-    return user.as_dict()
+    return user
 
 
 @router.post("/login")
@@ -161,10 +161,11 @@ async def login(request: Request):
     password = data.get("password")
     if not username or not password:
         return {"error": "Username and password are required"}, 400
-    user = await Users.get(username=username)
+    request.logger.error(f"username: {username}")
+    user = await User.get(username=username)
     if not user:
         return {"error": "User not found"}, 404
-
+    request.logger.error(f"user: {user}")
     config = None
     if not user.is_system and user.openid_provider is not None:
         openid_provider = await OpenIDProvider.get(id=user.openid_provider)
@@ -193,10 +194,15 @@ async def login(request: Request):
             if "401" in str(e):
                 raise UnauthenticatedError()
             else:
-                request.logger.error(e)
+                raise e
     else:
+        request.logger.error(f"user is system: {user.is_system}")
         tenant_config = await Configuration.first()
+        request.logger.error(f"tenant config: {tenant_config}")
         public_config = await PublicConfiguration.first()
+        request.logger.error(f"tenant config: {tenant_config}")
+        request.logger.error(f"public config: {public_config}")
+        request.logger.error(f"user: {user}")
         token_response = await get_token_from_local_system(
             password,
             user,
@@ -205,6 +211,14 @@ async def login(request: Request):
         )
         if "access_token" not in token_response:
             raise UnauthenticatedError()
+        await user.sessions.create(
+            token=token_response["access_token"],
+            expires_at=token_response["expires_in"],
+            refresh_token=token_response["refresh_token"],
+            ip_address=request.headers.get(b"X-Real-IP"),
+            user_agent=request.headers.get(b"User-Agent"),
+        )
+        return token_response
 
 
 @router_two.get("/greet")

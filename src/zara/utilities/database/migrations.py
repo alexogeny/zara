@@ -1,19 +1,17 @@
 import datetime
 import hashlib
+import importlib.util
 import inspect
 import os
+import sys
+from pathlib import Path
 from typing import List
-from typing import Optional as TypingOptional
 
-from .base import Model, Public
+from .base import Model
 from .fields import (
-    AutoIncrement,
     DatabaseField,
-    DatabaseFieldType,
-    HasMany,
     HasOne,
     Optional,
-    PrimaryKey,
     Required,
 )
 from .sqllex import AlterTable, DropTable, compare_sql_statements, parse_sql_statements
@@ -21,7 +19,7 @@ from .sqllex import AlterTable, DropTable, compare_sql_statements, parse_sql_sta
 
 class SchemaGenerator:
     def __init__(self):
-        self.models = []
+        self.models = {}
 
     def register_all_models(self, root_dir="."):
         """Look for all `*_model.py` files and register models from them."""
@@ -29,49 +27,28 @@ class SchemaGenerator:
             for file in files:
                 if file.endswith("_model.py"):  # Only process `*.model.py` files
                     model_path = os.path.join(root, file)
-                    self._load_and_register_models(model_path)
+                    self._load_and_register_models(Path(model_path))
 
     def _load_and_register_models(self, filepath):
-        """Executes a model file and registers all models defined in it."""
+        """Dynamically imports a model file and registers all models defined in it."""
         try:
-            with open(filepath, "r") as file:
-                # Prepare a local namespace for executing the file
-                local_namespace = {}
+            module_name = filepath.stem
 
-                # Add imports and necessary context to the local namespace
-                exec(
-                    file.read(),
-                    {
-                        "datetime": datetime,
-                        "Model": Model,
-                        "AutoIncrement": AutoIncrement,
-                        "HasMany": HasMany,
-                        "Optional": Optional,
-                        "PrimaryKey": PrimaryKey,
-                        "Required": Required,
-                        "TypingOptional": TypingOptional,
-                        "HasOne": HasOne,
-                        "DatabaseField": DatabaseField,
-                        "DatabaseFieldType": DatabaseFieldType,
-                        "Public": Public,
-                    },
-                    local_namespace,
-                )
+            spec = importlib.util.spec_from_file_location(module_name, filepath)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
 
-                for name, obj in local_namespace.items():
-                    if (
-                        inspect.isclass(obj)
-                        and issubclass(obj, Model)
-                        and obj is not Model
-                    ):
-                        self.models.append(obj)
-                        print(f"Registered model from {filepath}: {name}")
+            for name, obj in inspect.getmembers(module):
+                if inspect.isclass(obj) and issubclass(obj, Model) and obj is not Model:
+                    self.models[name] = obj
+
         except Exception as e:
             print(f"Failed to load models from {filepath}: {e}")
 
     def generate_create_table_sql(self, model_cls) -> str:
         """Generates the CREATE TABLE SQL for a given model."""
         table_name = model_cls._get_table_name()
+
         fields = model_cls._get_fields()
 
         sql = f"CREATE TABLE {table_name} (\n"
@@ -89,13 +66,18 @@ class SchemaGenerator:
                     f"    {field_name} {self._get_sql_type(field_type.field_type)}"
                 )
             elif isinstance(field_type, HasOne):
-                matching_model = next(
-                    (m for m in self.models if m.__name__ == field_type.related_model),
-                    None,
-                )
-                referenced_table = matching_model._get_table_name()
+                matching_model = self.models.get(field_type.related_model)
+                try:
+                    referenced_table = matching_model._get_table_name()
+                except AttributeError:
+                    print(
+                        f"No table name found for {field_type.related_model} on {table_name}"
+                    )
+                    print("Did you forget to register the model?")
+                    print("Quitting now...")
+                    raise sys.exit(1)
                 foreign_key_constraint = (
-                    f"ALTER TABLE {table_name} ADD CONSTRAINT fk_{table_name}_{field_name} "
+                    f"ALTER TABLE {table_name} ADD CONSTRAINT fk_{table_name.replace('"', '')}_{field_name} "
                     f"FOREIGN KEY ({field_name}) REFERENCES {referenced_table}(id);\n"
                 )
                 relation_lines.append(foreign_key_constraint)
@@ -138,7 +120,7 @@ class SchemaGenerator:
     def _generate_index_sql(self, table_name: str, unique, fields):
         unique = "UNIQUE " if unique else ""
         fields = ", ".join(fields)
-        return f"CREATE {unique}INDEX idx_{table_name}_{fields.replace(' ', '_')} ON {table_name} ({fields});"
+        return f"CREATE {unique}INDEX idx_{table_name.replace('"', '')}_{fields.replace(' ', '_')} ON {table_name} ({fields});"
 
     def _get_sql_type(self, python_type):
         """Maps Python types to SQL types."""
@@ -162,7 +144,7 @@ class SchemaGenerator:
         schema = ""
         relations = []
         indices = []
-        for model in self.models:
+        for name, model in self.models.items():
             schema_part, relations_new, indexes = self.generate_create_table_sql(model)
             schema += schema_part + "\n"
             relations.extend(relations_new)
@@ -308,7 +290,7 @@ class MigrationManager:
 
         for statement in migration_sql_statements:
             # TODO: crude check, add nuance later
-            if "public." in statement.raw:
+            if "TABLE public." in statement.raw:
                 public_statements.append(statement)
             else:
                 private_statements.append(statement)
