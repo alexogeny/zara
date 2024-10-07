@@ -1,9 +1,11 @@
 import asyncio
+import importlib
 import logging
 import os
 import sys
 import threading
 import time
+import traceback
 
 from zara.utilities.logger import setup_logger
 
@@ -45,13 +47,27 @@ class FileMonitor:
             if path not in self.file_mtimes:
                 self.file_mtimes[path] = current_mtime
             elif current_mtime != self.file_mtimes[path]:
-                self.logger.info(f"File changed: {path}")
+                self.logger.info(f"File changed: {path}. Triggering a reload...")
                 self.file_mtimes[path] = current_mtime
                 self.reload_server()
         except FileNotFoundError:
             pass
 
     def reload_server(self):
-        """Reload the server by restarting the Python interpreter."""
-        self.logger.info("Reloading server due to file changes...")
-        os.execv(sys.executable, ["python"] + sys.argv)
+        """Attempt to reload the server, catching and logging any errors."""
+        try:
+            main_module = sys.modules["__main__"].__file__
+            main_module_name = os.path.splitext(os.path.basename(main_module))[0]
+
+            for module_name, module in list(sys.modules.items()):
+                if hasattr(module, "__file__") and module.__file__:
+                    if module.__file__.startswith(self.watch_dir):
+                        importlib.reload(module)
+
+            importlib.import_module(main_module_name)
+
+            self.logger.info("Server reloaded successfully.")
+        except Exception as e:
+            error_msg = f"Error during reload: {str(e)}\n{traceback.format_exc()}"
+            self.logger.error(error_msg)
+            self.logger.info("Waiting for next file change to attempt reload again...")
