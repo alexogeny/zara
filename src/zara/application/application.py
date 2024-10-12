@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 
 import orjson
 
+from migrate import Migrator
 from zara.application.events import Event, Listener
 from zara.application.translation import I18n
 from zara.errors import (
@@ -17,8 +18,10 @@ from zara.errors import (
 )
 from zara.utilities.audit import create_audit_log
 from zara.utilities.context import Context
-from zara.utilities.database import AsyncDatabase
-from zara.utilities.database.migrations import MigrationManager
+
+# from zara.utilities.database import AsyncDatabase
+# from zara.utilities.database.models.public_model import Customer
+from zara.utilities.database.orm import DatabaseManager
 
 from .events import EventBus
 
@@ -79,7 +82,6 @@ class Request:
 
     async def json(self) -> Dict[Any, Any]:
         await self.body()
-        self.logger.debug(self._body)
         return orjson.loads(self._body)
 
     def as_dict(self):
@@ -208,6 +210,7 @@ class ASGIApplication:
         self._translations = {}
         self._i18n = I18n(self)
         self._event_bus: EventBus = None
+        self.db: DatabaseManager = None
         self._pending_listeners = []
         self.logger = None
 
@@ -245,12 +248,10 @@ class ASGIApplication:
 
     def _check_duplicate_routes(self) -> List[str]:
         all_routes = [route for router in self.routers for route in router.routes]
-        self.logger.info(all_routes)
         duplicates = []
         seen = set()
         for route in all_routes:
             key = (route.method, route.path)
-            self.logger.info(key)
             if key in seen:
                 duplicates.append(f"{route.method} {route.path}")
             else:
@@ -259,9 +260,8 @@ class ASGIApplication:
             self.logger.warning(f"Duplicate routes: {duplicates}")
         return duplicates
 
-    # check migrations folder at root has migration files and throw if not
     def _check_migrations(self):
-        if not MigrationManager().get_migration_files():
+        if not Migrator().get_migration_files():
             self.logger.error(
                 "No migrations found. Please run 'uv run migrate.py --create <migration_name>'"
             )
@@ -292,7 +292,7 @@ class ASGIApplication:
             if handler:
                 request.t = self._i18n.get_translator("de")
                 x_subdomain = await self.get_x_subdomain(request)
-                async with AsyncDatabase(x_subdomain, backend="postgresql") as db:
+                async with self.db.transaction(schema=x_subdomain) as db:
                     with Context.context(db, request, self._event_bus, x_subdomain):
                         try:
                             response = await handler(request, **params)

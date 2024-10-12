@@ -6,6 +6,8 @@ from typing import Callable
 import uvloop
 
 from zara.application.events import Event, EventBus
+from zara.utilities.context import Context
+from zara.utilities.database.orm import AsyncDB, DatabaseManager
 from zara.utilities.dotenv import env
 from zara.utilities.file_monitor import FileMonitor
 from zara.utilities.logger import setup_logger
@@ -25,6 +27,7 @@ class ASGIServer:
         self.event_bus = EventBus()
         self.app._event_bus = self.event_bus
         self.logger = None
+        self.dbm = None
 
     def init_socket(self):
         """Initialize a non-blocking socket."""
@@ -47,6 +50,13 @@ class ASGIServer:
             log_file="serverlogs.log",
             level=logging.DEBUG,
         )
+
+        db = AsyncDB()
+        self.dbm = DatabaseManager(db, logger=self.logger)
+        self.app.db = self.dbm
+        async with self.dbm.transaction() as db:
+            with Context.context(db, None, None, None):
+                await self.dbm.bootstrap()
 
         self.app._attach_pending_listeners()
         await self.event_bus.start()
@@ -80,6 +90,7 @@ class ASGIServer:
         except KeyboardInterrupt:
             print("Shutting down server...")
             self.loop.run_until_complete(self.event_bus.stop())
+            self.loop.run_until_complete(self.dbm.close_pool())
         finally:
             self.server_socket.close()
             self.loop.close()

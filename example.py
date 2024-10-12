@@ -1,7 +1,14 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from example_models.users_model import User
+from example.models.configuration_model import OpenIDProvider, TenantConfig
+from example.models.public_model import (
+    Configuration as PublicConfiguration,
+)
+from example.models.public_model import (
+    Customer,
+)
+from example.models.user_model import User
 from zara.application.application import ASGIApplication, Request, Router
 from zara.application.authentication import auth_required
 from zara.application.events import Event
@@ -13,13 +20,6 @@ from zara.application.validation import (
 )
 from zara.asgi.server import ASGIServer
 from zara.errors import ForbiddenError, NotFoundError, UnauthenticatedError
-from zara.utilities.database.models.configuration_model import (
-    Configuration,
-    OpenIDProvider,
-)
-from zara.utilities.database.models.public_model import (
-    Configuration as PublicConfiguration,
-)
 from zara.utilities.jwt_encode_decode import (
     create_password,
     get_token_from_local_system,
@@ -74,6 +74,12 @@ class RegisterValidator(ValidatorBase):
 app.add_router(router)
 
 
+@router.post("/customer/new/{customer:str}")
+async def customer_new(request: Request, customer: str):
+    customer = await Customer(name=customer, logger=request.logger).create()
+    return customer
+
+
 @router.get("/")
 async def hello_world(request: Request):
     return b"Hello, World!"
@@ -83,15 +89,16 @@ async def hello_world(request: Request):
 async def hello_world_create(request: Request, username: str):
     user = await User(
         name="John Smith",
-        username=username,
-        email_address="john@smith.site",
+        age=25,
+        password_hash="password",
     ).create()
-    tenant_entry, _ = await Configuration.first_or_create()
-    tenant_secret = tenant_entry.token_secret
-    public_entry, _ = await Configuration.first_or_create()
-    public_secret = public_entry.token_secret
+    tenant_entry = await TenantConfig.first_or_create()
+    public_entry = await PublicConfiguration.first_or_create()
     password = create_password(
-        "password", f"{public_secret}{tenant_secret}{user.token_secret}".encode("utf-8")
+        "password",
+        f"{public_entry.token_secret}{tenant_entry.token_secret}{user.token_secret}".encode(
+            "utf-8"
+        ),
     )
     user.password_hash = password[0]
     await user.save()
@@ -161,11 +168,9 @@ async def login(request: Request):
     password = data.get("password")
     if not username or not password:
         return {"error": "Username and password are required"}, 400
-    request.logger.error(f"username: {username}")
     user = await User.get(username=username)
     if not user:
         return {"error": "User not found"}, 404
-    request.logger.error(f"user: {user}")
     config = None
     if not user.is_system and user.openid_provider is not None:
         openid_provider = await OpenIDProvider.get(id=user.openid_provider)
@@ -196,13 +201,8 @@ async def login(request: Request):
             else:
                 raise e
     else:
-        request.logger.error(f"user is system: {user.is_system}")
-        tenant_config = await Configuration.first()
-        request.logger.error(f"tenant config: {tenant_config}")
+        tenant_config = await TenantConfig.first()
         public_config = await PublicConfiguration.first()
-        request.logger.error(f"tenant config: {tenant_config}")
-        request.logger.error(f"public config: {public_config}")
-        request.logger.error(f"user: {user}")
         token_response = await get_token_from_local_system(
             password,
             user,

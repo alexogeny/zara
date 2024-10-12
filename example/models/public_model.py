@@ -1,27 +1,12 @@
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING
 
 import orjson
 
-from zara.utilities.database.base import Model, Public
-from zara.utilities.database.fields import (
-    DatabaseField,
-    HasMany,
-    HasOne,
-    Optional,
-)
-from zara.utilities.database.mixins import IdMixin, dumb_datetime
+from example.models.mixins import IdMixin, MigratesOnCreation
+from zara.utilities.database.orm import DatabaseField, Model, Public, Relationship
 from zara.utilities.database.validators import validate_slug
 from zara.utilities.id57 import generate_lexicographical_uuid
-
-if TYPE_CHECKING:
-
-    class Users:
-        pass
-
-    class Database:
-        pass
 
 
 class LicenseTier(Enum):
@@ -50,31 +35,82 @@ class BillingCycle(Enum):
     YEARLY = "yearly"
 
 
+class Customer(Model, Public, MigratesOnCreation):
+    _table_name = "customers"
+    id = DatabaseField(
+        primary_key=True,
+        data_type=str,
+        length=30,
+        default_factory=generate_lexicographical_uuid,
+    )
+    name = DatabaseField(data_type=str, unique=True, index=True)
+
+    @property
+    def schema_name(self):
+        return self.name.lower().strip().replace("-", "_").replace(" ", "_")
+
+
+def dumb_datetime():
+    return datetime.datetime.now(tz=datetime.timezone.utc).replace(tzinfo=None)
+
+
+class Configuration(Model, Public, IdMixin):
+    _table_name = "configuration"
+    token_secret = DatabaseField(
+        nullable=False,
+        default_factory=generate_lexicographical_uuid,
+        data_type=str,
+        length=30,
+        private=True,
+    )
+
+
+class Features(Model, Public, IdMixin):
+    _table_name = "features"
+    name: str = DatabaseField(
+        nullable=False,
+        data_type=str,
+        length=128,
+    )
+    slug: str = DatabaseField(
+        nullable=False,
+        data_type=str,
+        length=128,
+        validate=validate_slug,
+    )
+    description: str = DatabaseField(
+        nullable=False,
+        data_type=str,
+        length=255,
+    )
+
+
 class UsageLimit(Model, Public, IdMixin):
-    license_id: HasOne["License"] = HasOne["License"]
-    feature_slug: HasOne["Feature"] = HasOne["Feature"]
-    customer_id: HasOne["Customer"] = HasOne["Customer"]
-    limit_type: LimitType = DatabaseField(
+    _table_name = "usage_limits"
+    license = Relationship("License", has_one="license")
+    features = Relationship("Features", has_one="features")
+    customer = Relationship("Customer", has_one="customer")
+    limit_type = DatabaseField(
         nullable=False,
         data_type=LimitType,
         default=LimitType.UNLIMITED,
         length=max([len(LimitType.value) for LimitType in LimitType]),
     )
-    max_value: int = DatabaseField(
+    max_value = DatabaseField(
         nullable=False,
         data_type=int,
     )
-    current_value: int = DatabaseField(
+    current_value = DatabaseField(
         nullable=False,
         data_type=int,
         default=0,
     )
-    reset_period: Optional[str] = DatabaseField(
+    reset_period = DatabaseField(
         nullable=True,
         data_type=ResetPeriod,
         length=max([len(ResetPeriod.value) for ResetPeriod in ResetPeriod]),
     )
-    last_reset: datetime = DatabaseField(
+    last_reset = DatabaseField(
         nullable=False,
         data_type=datetime,
         default=lambda: dumb_datetime(),
@@ -114,112 +150,48 @@ class UsageLimit(Model, Public, IdMixin):
             await self.save()
 
 
-class Configuration(Model, Public):
-    token_secret: Optional[str] = DatabaseField(
-        nullable=False,
-        default=lambda: generate_lexicographical_uuid(),
-        auto_increment=False,
-        primary_key=False,
-        data_type=str,
-        length=30,
-        private=True,
-    )
-
-
-class Customer(Model, Public, IdMixin):
-    name: str = DatabaseField(nullable=False, data_type=str, length=255, unique=True)
-    license_id: HasOne["License"] = HasOne["License"]
-
-
-class Feature(Model, Public, IdMixin):
-    name: str = DatabaseField(
-        nullable=False,
-        data_type=str,
-        length=255,
-    )
-    slug: str = DatabaseField(
-        nullable=False,
-        data_type=str,
-        length=255,
-        validate=validate_slug,
-    )
-    description: str = DatabaseField(
-        nullable=False,
-        data_type=str,
-        length=1000,
-    )
-
-
-class FeatureTemplate(Model, Public, IdMixin):
-    name: str = DatabaseField(
-        nullable=False,
-        data_type=str,
-        length=255,
-    )
-    slug: str = DatabaseField(
-        nullable=False,
-        data_type=str,
-        length=255,
-        validate=validate_slug,
-    )
-    tier: LicenseTier = DatabaseField(
-        nullable=False,
-        data_type=LicenseTier,
-    )
-    features: str = DatabaseField(
-        nullable=False,
-        data_type=str,
-        length=1000,
-    )
-
-    def get_features(self):
-        return orjson.loads(self.features)
-
-    def set_features(self, feature_dict):
-        self.features = orjson.dumps(feature_dict)
-
-
 class License(Model, Public, IdMixin):
-    customer_id: HasOne["Customer"] = HasOne["Customer"]
-    usage_limits: HasMany["UsageLimit"] = HasMany["UsageLimit"]
-    license_tier: LicenseTier = DatabaseField(
+    _table_name = "license"
+    customer = Relationship("Customer", has_one="license")
+    usage_limits = Relationship("UsageLimit", has_many="license")
+    license_tier = DatabaseField(
         nullable=False,
         data_type=LicenseTier,
         default=LicenseTier.FREE_TRIAL,
         length=max([len(LicenseTier.value) for LicenseTier in LicenseTier]),
     )
-    feature_template_id: str = DatabaseField(
+    feature_template_id = DatabaseField(
         nullable=False,
         data_type=str,
         length=30,
     )
-    custom_features: Optional[str] = DatabaseField(
+    custom_features = DatabaseField(
         nullable=True,
         data_type=str,
         length=1000,
     )
-    max_users: int = DatabaseField(
+    max_users = DatabaseField(
         nullable=False,
         data_type=int,
         default=1,
     )
-    price: float = DatabaseField(
+    price = DatabaseField(
         nullable=False,
         data_type=float,
         default=0.0,
     )
-    billing_cycle: str = DatabaseField(
+    billing_cycle = DatabaseField(
         nullable=False,
         data_type=BillingCycle,
         default=BillingCycle.MONTHLY,
         length=max([len(BillingCycle.value) for BillingCycle in BillingCycle]),
     )
-    start_date: datetime = DatabaseField(
+    start_date = DatabaseField(
         nullable=False,
         data_type=datetime,
         default=lambda: dumb_datetime(),
     )
-    expiration_date: Optional[datetime] = DatabaseField(
+    expiration_date = DatabaseField(
         nullable=True,
         data_type=datetime,
     )
@@ -228,21 +200,21 @@ class License(Model, Public, IdMixin):
         data_type=bool,
         default=True,
     )
-    stripe_customer_id: Optional[str] = DatabaseField(
+    stripe_customer_id = DatabaseField(
         nullable=True,
         data_type=str,
         length=255,
     )
-    stripe_subscription_id: Optional[str] = DatabaseField(
+    stripe_subscription_id = DatabaseField(
         nullable=True,
         data_type=str,
         length=255,
     )
-    free_trial_expires_at: Optional[datetime] = DatabaseField(
+    free_trial_expires_at = DatabaseField(
         nullable=True,
         data_type=datetime,
     )
-    free_trial_started_at: Optional[datetime] = DatabaseField(
+    free_trial_started_at = DatabaseField(
         nullable=True,
         data_type=datetime,
     )

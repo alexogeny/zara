@@ -3,14 +3,14 @@ from typing import TYPE_CHECKING
 
 from zara.application.events import Event
 from zara.utilities.context import Context
-from zara.utilities.database import AsyncDatabase
+from zara.utilities.database.orm import AsyncDB, DatabaseManager
 
 if TYPE_CHECKING:
     pass
 
 
 async def create_audit_log(event: Event):
-    from zara.utilities.database.models.auditlog_model import AuditLog
+    from example.models.audit_log_model import AuditLog
 
     request = event.data["request"]
     is_system = False
@@ -41,8 +41,9 @@ async def create_audit_log(event: Event):
         change_snapshot="_",
     )
 
-    async with AsyncDatabase(
-        event.data["meta"]["customer"], backend="postgresql"
-    ) as db:
+    db = AsyncDB()
+    dbm = DatabaseManager(db)
+
+    async with dbm.transaction() as db:
         with Context.context(db, request, None, event.data["meta"]["customer"]):
             await audit_log.create()

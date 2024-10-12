@@ -1,14 +1,15 @@
 """ORM for asyncpg."""
 
-import asyncio
 import datetime
-import threading
-from contextvars import ContextVar
-from typing import Dict, Type
+import os
+from contextlib import asynccontextmanager
+from copy import copy
+from typing import Callable, Dict, Optional, Type
 
 import asyncpg
 import orjson
-import uvloop
+
+from zara.utilities.context import Context
 
 
 class ModelRegistry:
@@ -24,51 +25,156 @@ class ModelRegistry:
 
 
 class AsyncDB:
-    """AsyncDB is a context manager that can be used to run queries asynchronously."""
+    def __init__(self):
+        self.connection_details = self.get_connection_details()
+        self.pool: asyncpg.Pool | None = None
 
-    def __init__(self, connection_details: dict):
-        self.connection_details = connection_details
-        self.db = None
-        self.loop = uvloop.new_event_loop()
-        self.thread = threading.Thread(target=self._runner)
-        self.context = ContextVar("context")
-        self.context.db = None
+    def get_connection_details(self):
+        db_url = os.environ.get(
+            "DATABASE_URL",
+            "postgresql://user:password@localhost/dbname",
+        )
+        auth_part, host_part = db_url.split("@")
+        host_name, db_name = host_part.split("/")
+        u, p = auth_part.split("//")[1].split(":")
+        details = {
+            "host": host_name.split(":")[0],
+            "port": 5432,
+            "user": u,
+            "password": p,
+            "database": db_name,
+        }
+        return details
 
-        # Start the thread
-        self.thread.start()
+    async def setup_pool(self):
+        if self.pool is None:
+            self.pool = await asyncpg.create_pool(**self.connection_details)
 
-    def _runner(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self._setup_db())
+    async def close_pool(self):
+        if self.pool:
+            await self.pool.close()
 
-    async def _setup_db(self):
-        self.db = await asyncpg.create_pool(**self.connection_details)
+    @asynccontextmanager
+    async def acquire(self):
+        if self.pool is None:
+            await self.setup_pool()
+        async with self.pool.acquire() as conn:
+            yield conn
 
-    async def __aenter__(self):
-        """Enter the context manager."""
-        await self.db.acquire()
-        self.context.db = self.db
-        return self.context
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Exit the context manager."""
-        self.context.db.release()
-        self.context.db = None
+class DatabaseManager:
+    def __init__(self, db: AsyncDB, schema: str = "public", logger=None):
+        self.db = db
+        self.schema = schema
+        self.logger = logger
 
-    def __getattr__(self, name):
-        """Get the attribute from the context."""
-        return getattr(self.context.db, name)
+    async def bootstrap(self):
+        from migrate import Migrator
 
-    def __del__(self):
-        """Delete the context manager."""
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self.thread.join()
-        self.loop.close()
+        migrator = Migrator(logger=self.logger)
+        schema_list = await migrator.list_schemas()
+        pending = await migrator.compile_list_of_pending_migrations(schema_list)
+        for schema, migrations in pending.items():
+            await migrator.run_migrations(schema, migrations)
+
+    @asynccontextmanager
+    async def transaction(self, schema="public"):
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                yield TransactionContext(
+                    conn, schema=schema or self.schema, logger=self.logger
+                )
+
+
+class TransactionContext:
+    def __init__(self, conn, schema="public", logger=None):
+        self.conn = conn
+        self.schema = schema
+        self.overrode_schema = None
+        self.logger = logger
+        self.logger.debug(f"Spawning transaction context in schema {schema}")
+
+    async def execute(
+        self, statement, *values, fetch_mode=None, public=False, schema=None
+    ):
+        self.logger.debug(f"running {statement} on {self.schema} with values {values}")
+        if not self.overrode_schema:
+            if schema is not None:
+                await self.set_schema(schema)
+            elif self.schema and not public:
+                await self.set_schema(self.schema)
+            elif public:
+                await self.set_schema("public")
+        if fetch_mode:
+            if values:
+                result = await self.conn.fetch(statement, *values)
+            else:
+                result = await self.conn.fetch(statement)
+        else:
+            if values:
+                result = await self.conn.execute(statement, *values)
+            else:
+                result = await self.conn.execute(statement)
+        if self.schema and public and not self.overrode_schema:
+            await self.set_schema(self.schema)
+        return result
+
+    async def execute_in_schema(
+        self, statement, *values, schema="public", fetch_mode=None
+    ):
+        await self.set_schema(schema)
+        return await self.execute(
+            statement, *values, fetch_mode=fetch_mode, schema=schema
+        )
+
+    async def set_schema(self, schema):
+        await self.conn.execute(f"SET search_path TO {schema}")
+        self.overrode_schema = schema
+
+    async def unset_schema(self):
+        await self.conn.execute("SET search_path TO public")
+        self.overrode_schema = None
+
+    async def schema_exists(self, schema):
+        result = await self.execute(
+            f"SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = '{schema}')",
+            fetch_mode=True,
+        )
+        return result[0]["exists"]
+
+    async def create_schema(self, schema):
+        await self.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        await self.execute_in_schema(
+            f"CREATE TABLE IF NOT EXISTS {schema}.migrations (migration_hash VARCHAR(255) PRIMARY KEY, name VARCHAR(255), applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            schema=schema,
+        )
+
+    async def table_exists(self, table_name, schema="public"):
+        await self.set_schema(schema)
+        result = await self.execute(
+            f"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '{table_name}')",
+            fetch_mode=True,
+            public=schema == "public",
+        )
+        return result[0]["exists"]
+
+    async def table_has_data(self, table_name, schema="public"):
+        await self.set_schema(schema)
+        result = await self.execute(
+            f"SELECT EXISTS (SELECT 1 FROM {table_name})", fetch_mode=True
+        )
+        return result[0]["exists"]
+
+    async def record_migration(self, migration_hash, migration_name, schema="public"):
+        await self.set_schema(schema)
+        await self.execute(
+            "INSERT INTO migrations (migration_hash, name, applied_at) VALUES ($1, $2, CURRENT_TIMESTAMP)",
+            migration_hash,
+            migration_name,
+        )
 
 
 class DatabaseField:
-    """Defines a field that exists in the database."""
-
     def __init__(
         self,
         default=None,
@@ -81,6 +187,7 @@ class DatabaseField:
         length=None,
         data_type=str,
         private=False,
+        validate: Optional[Callable] = None,
     ):
         self.default = default
         self.default_factory = default_factory
@@ -93,6 +200,7 @@ class DatabaseField:
         self.data_type = data_type
         self.private = private
         self.name = None
+        self.validate = validate
 
     def __set_name__(self, owner, name):
         self.name = name
@@ -170,6 +278,20 @@ class Relationship:
                 return await related_model.get(**{f"{self.owns_one}_id": foreign_key})
         return None
 
+    def resolve_foreign_table_name(self):
+        related_model = ModelRegistry.get(self.related_model_name)
+        return related_model._get_full_table_name()
+
+    def _sql_column_name(self):
+        if self.has_one:
+            return f"{self.has_one}"
+        return None
+
+    def as_fkname(self, model_name: str):
+        if self.has_one:
+            return f"fk_{model_name}_{self.name}"
+        return None
+
 
 class Model:
     """Base class for all models."""
@@ -185,7 +307,7 @@ class Model:
         self._changed_fields = set()
         self._loaded_fields = set()
         self._loaded_relationships = set()
-        self._allow_private = False
+        self._allow_private = True
         for key, value in kwargs.items():
             setattr(self, key, value)
         self._changed_fields.clear()
@@ -203,20 +325,21 @@ class Model:
         if name.startswith("_") or name == "dict" or name == "json":
             return super().__getattr__(name)
         attr = super().__getattribute__(name)
-        if isinstance(attr, DatabaseField) and attr.private:
+        if isinstance(attr, DatabaseField) and attr.private and not self._allow_private:
             raise AttributeError(
                 f"'{self.__class__.__name__}' object has no attribute '{name}'"
             )
         return attr
 
     def dict(self, include_private=False):
+        _allow_private = copy(self._allow_private)
         self._allow_private = include_private
         try:
             result = {
                 field.name: getattr(self, field.name)
                 for field in self.__class__.__dict__.values()
                 if isinstance(field, DatabaseField)
-                and (not field.private or include_private)
+                and (not field.private or (include_private and field.private))
             }
             for rel_name in self._loaded_relationships:
                 rel_value = getattr(self, rel_name)
@@ -229,7 +352,7 @@ class Model:
                 else:
                     result[rel_name] = rel_value
         finally:
-            self._allow_private = False
+            self._allow_private = _allow_private
         return result
 
     def json(self, include_private=False):
@@ -245,17 +368,27 @@ class Model:
         query = f"SELECT {fields} FROM {cls._get_full_table_name()} WHERE "
         conditions = [f"{key} = ${i+1}" for i, key in enumerate(kwargs.keys())]
         query += " AND ".join(conditions)
-
-        async with AsyncDB.context.db.acquire() as conn:
-            row = await conn.fetchrow(query, *kwargs.values())
-            if row:
-                instance = cls(**dict(row))
-                instance._loaded_fields = set(row.keys())
-                instance._changed_fields.clear()
-                if include:
-                    await instance.load_relationships(include)
-                return instance
+        db = Context.get_db()
+        if kwargs:
+            row = await db.execute(query, *kwargs.values(), fetch_mode=True)
+        else:
+            query = query.replace("WHERE ", "LIMIT 1")
+            row = await db.execute(query, fetch_mode=True)
+        if row:
+            instance = cls(**dict(row[0]))
+            instance._loaded_fields = set(row[0].keys())
+            instance._changed_fields.clear()
+            if include:
+                await instance.load_relationships(include)
+            return instance
         return None
+
+    @classmethod
+    async def first_or_create(cls, **kwargs):
+        result = await cls.get(**kwargs)
+        if isinstance(result, Model):
+            return result
+        return await cls.create(cls())
 
     @classmethod
     async def filter(
@@ -279,17 +412,19 @@ class Model:
         if limit:
             query += f" LIMIT {limit}"
 
-        async with AsyncDB.context.db.acquire() as conn:
-            rows = await conn.fetch(
-                query, *[v for k, v in kwargs.items() if k not in ["order_by", "limit"]]
-            )
-            instances = [cls(**dict(row)) for row in rows]
-            for instance in instances:
-                instance._loaded_fields = set(dict(rows[0]).keys())
-                instance._changed_fields.clear()
-                if include:
-                    await instance.load_relationships(include)
-            return instances
+        db = Context.get_db()
+        rows = await db.execute(
+            query,
+            *[v for k, v in kwargs.items() if k not in ["order_by", "limit"]],
+            fetch_mode=True,
+        )
+        instances = [cls(**dict(row)) for row in rows]
+        for instance in instances:
+            instance._loaded_fields = set(dict(rows[0]).keys())
+            instance._changed_fields.clear()
+            if include:
+                await instance.load_relationships(include)
+        return instances
 
     async def load_relationships(self, include):
         for relationship_name in include:
@@ -300,29 +435,28 @@ class Model:
                 setattr(self, relationship_name, await relationship.load(self))
                 self._loaded_relationships.add(relationship_name)
 
-    @classmethod
-    async def create(cls, **kwargs):
-        instance = cls(**kwargs)
-        await instance.save()
-        return instance
+    async def create(self, **kwargs):
+        # instance = cls(**kwargs)
+        await self.save()
+        return self
 
     async def save(self):
         fields = [
             field
-            for field in self.__class__.__dict__.values()
+            for field in self._get_mro_fields().values()
             if isinstance(field, DatabaseField)
         ]
-
-        if hasattr(self, "id") and self.id:
-            # Update existing record
+        existing_entity = "id" in self._loaded_fields or self._changed_fields
+        if existing_entity:
             if not self._changed_fields:
                 return  # No changes to save
 
             query = f"UPDATE {self._get_full_table_name()} SET "
             updates = [
-                f"{field.name} = ${i+1}"
-                for i, field in enumerate(fields)
-                if field.name in self._changed_fields and field.name != "id"
+                f"{field} = ${i+1}"
+                for i, field in enumerate(
+                    [f for f in self._changed_fields if f != "id"]
+                )
             ]
             query += ", ".join(updates)
             query += f" WHERE id = ${len(updates) + 1}"
@@ -333,20 +467,30 @@ class Model:
             ]
             values.append(self.id)
         else:
-            # Insert new record
             query = f"INSERT INTO {self._get_full_table_name()} ("
             query += ", ".join(field.name for field in fields)
             query += ") VALUES ("
             query += ", ".join(f"${i+1}" for i in range(len(fields)))
             query += ") RETURNING id"
             values = [getattr(self, field.name) for field in fields]
-
-        async with AsyncDB.context.db.acquire() as conn:
-            result = await conn.fetchval(query, *values)
-            if result and not hasattr(self, "id"):
-                self.id = result
+        db = Context.get_db()
+        result = await db.execute(
+            query, *values, fetch_mode=True, public=self.is_public
+        )
+        if result:
+            self.id = result[0]["id"]
 
         self._changed_fields.clear()
+
+        if not existing_entity:
+            if "post_init" in self.__class__.__dict__:
+                callable = self.__class__.__dict__["post_init"]
+                await callable(self)
+        elif "post_save" in self.__class__.__dict__:
+            callable = self.__class__.__dict__["post_save"]
+            await callable(self)
+
+        return self
 
     def __call__(self, **kwargs):
         for key, value in kwargs.items():
@@ -380,37 +524,115 @@ class Model:
     def refresh_field(self, field_name):
         self._changed_fields.discard(field_name)
 
+    def _get_table_sql(self):
+        return (
+            f"CREATE TABLE {self._get_full_table_name()} (\n    "
+            + ",\n    ".join(self._get_fields_for_table_spec())
+            + "\n)"
+        )
+
+    def _get_class_fields(self):
+        return self.__class__.__dict__
+
+    def _get_mro_fields(self):
+        fields = {}
+        for base in self.__class__.mro():
+            if base is not object:
+                for name, field in base.__dict__.items():
+                    if isinstance(field, DatabaseField) or isinstance(
+                        field, Relationship
+                    ):
+                        fields[name] = field
+        return fields
+
+    @property
+    def is_public(self):
+        for base in self.__class__.mro():
+            if base.__name__ != "Public":
+                continue
+            if "_schema" not in base.__dict__:
+                continue
+            if base.__dict__["_schema"] == "public":
+                return True
+        return False
+
+    def _get_fields_for_table_spec(self):
+        fields = []
+        for base in self.__class__.mro():
+            if base is not object:
+                for name, field in base.__dict__.items():
+                    if isinstance(field, DatabaseField):
+                        fields.append(
+                            f"{name} {self._get_field_type(field)}{self._get_field_params(field)}"
+                        )
+                    elif isinstance(field, Relationship):
+                        if field.has_one:
+                            column_name = field._sql_column_name()
+                            fields.append(
+                                f"{column_name} {self._get_field_type(field)}{self._get_field_length(field)}{self._get_field_params(field)}"
+                            )
+        return fields
+
+    def _get_field_params(self, field: DatabaseField | Relationship):
+        if isinstance(field, Relationship):
+            return ""
+        params = []
+        if field.primary_key:
+            params.append("PRIMARY KEY")
+        if field.auto_increment:
+            params.append("AUTOINCREMENT")
+        if not field.nullable:
+            params.append("NOT NULL")
+        if field.unique:
+            params.append("UNIQUE")
+        return " " + " ".join(params)
+
+    def _get_field_length(self, field: DatabaseField | Relationship):
+        if isinstance(field, Relationship):
+            return "(30)"
+        if field.length and field.data_type is str:
+            return f"({field.length})"
+        return ""
+
+    def _get_field_type(self, field: DatabaseField | Relationship):
+        if isinstance(field, Relationship):
+            return "VARCHAR"
+        if field.data_type is str:
+            return f"VARCHAR({field.length or 255})"
+        elif field.data_type is int:
+            return "INTEGER"
+        elif field.data_type is float:
+            return "FLOAT"
+        elif field.data_type is bool:
+            return "BOOLEAN"
+        elif field.data_type is datetime.datetime:
+            return "TIMESTAMP"
+        else:
+            return "TEXT"
+
+    def _get_relation_constraints(self):
+        constraints = []
+        for name, field in self._get_mro_fields().items():
+            if isinstance(field, Relationship):
+                if field.has_one:
+                    column_name = field._sql_column_name()
+                    constraints.append(
+                        f"ALTER TABLE {self._get_full_table_name()} ADD CONSTRAINT fk_{self._table_name}_{name} FOREIGN KEY ({column_name}) REFERENCES {field.resolve_foreign_table_name()}(id)"
+                    )
+        return constraints
+
+    def _get_indexes(self):
+        indexes = []
+        for name, field in self._get_mro_fields().items():
+            if isinstance(field, DatabaseField):
+                if field.index:
+                    indexes.append(
+                        f"CREATE INDEX idx_{self._table_name}_{name} ON {self._get_full_table_name()} ({name})"
+                    )
+        return indexes
+
 
 class Public:
     """Mixin to set the schema to public."""
 
     _schema = "public"
-
-
-# Example usage:
-class User(Public, Model):
-    _table_name = "users"
-
-    id = DatabaseField(primary_key=True, auto_increment=True)
-    name = DatabaseField()
-    age = DatabaseField(data_type=int)
-    password_hash = DatabaseField(private=True)
-
-
-# Mixin example
-class TimestampMixin:
-    created_at = DatabaseField(default_factory=datetime.now)
-    updated_at = DatabaseField(default_factory=datetime.now)
-
-    async def save(self):
-        self.updated_at = datetime.now()
-        await super().save()
-
-
-class Post(TimestampMixin, Public, Model):
-    _table_name = "posts"
-
-    id = DatabaseField(primary_key=True, auto_increment=True)
-    title = DatabaseField()
-    content = DatabaseField()
-    author = Relationship("User", has_one="posts")
