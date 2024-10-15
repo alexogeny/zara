@@ -4,6 +4,7 @@ import datetime
 import os
 from contextlib import asynccontextmanager
 from copy import copy
+from enum import Enum
 from typing import Callable, Dict, Optional, Type
 
 import asyncpg
@@ -197,15 +198,15 @@ class DatabaseField:
         self.index = index
         self.unique = unique
         self.length = length
-        self.data_type = data_type
+        self._data_type = data_type
         self.private = private
         self.name = None
         self.validate = validate
 
     def __set_name__(self, owner, name):
         self.name = name
-        if self.data_type is None and "__annotations__" in owner.__dict__:
-            self.data_type = owner.__annotations__get(name)
+        if self._data_type is None and "__annotations__" in owner.__dict__:
+            self._data_type = owner.__annotations__get(name)
 
     def __repr__(self):
         return f"<DatabaseField: {self.name}>"
@@ -224,6 +225,27 @@ class DatabaseField:
         if callable(self.default_factory):
             return self.default_factory()
         return self.default
+
+    def get_enum(self):
+        if isinstance(self._data_type, type) and issubclass(self._data_type, Enum):
+            return self._data_type
+        return None
+
+    @property
+    def data_type(self):
+        if self._data_type is str:
+            return "VARCHAR"
+        elif self._data_type is int:
+            return "INTEGER"
+        elif self._data_type is float:
+            return "FLOAT"
+        elif self._data_type is bool:
+            return "BOOLEAN"
+        elif self._data_type is datetime.datetime:
+            return "TIMESTAMP"
+        elif isinstance(self._data_type, type) and issubclass(self._data_type, Enum):
+            return self._data_type.__name__
+        return "TEXT"
 
 
 class Relationship:
@@ -290,6 +312,12 @@ class Relationship:
     def as_fkname(self, model_name: str):
         if self.has_one:
             return f"fk_{model_name}_{self.name}"
+        return None
+
+    @property
+    def data_type(self):
+        if self.has_one:
+            return "VARCHAR"
         return None
 
 

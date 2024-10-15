@@ -1,9 +1,11 @@
 # Example usage:
 import datetime
 
+from zara.utilities.context import Context
 from zara.utilities.database.orm import DatabaseField, Relationship
 from zara.utilities.database.validators import validate_slug
 from zara.utilities.id57 import generate_lexicographical_uuid
+from zara.utilities.time_and_date import naive_now
 
 
 class SoftDeleteMixin:
@@ -11,23 +13,21 @@ class SoftDeleteMixin:
     deleted_by = Relationship("User", has_one="deleted_by")
 
     async def delete(self):
-        self.deleted_at = datetime.datetime.now()
+        self.deleted_at = naive_now
+        self.deleted_by = Context.get_user()
         await super().delete()
 
 
 class AuditMixin(SoftDeleteMixin):
     _audit = True
-    created_at = DatabaseField(
-        default_factory=datetime.datetime.now, data_type=datetime.datetime
-    )
-    updated_at = DatabaseField(
-        default_factory=datetime.datetime.now, data_type=datetime.datetime
-    )
+    created_at = DatabaseField(default_factory=naive_now, data_type=datetime.datetime)
+    updated_at = DatabaseField(default_factory=naive_now, data_type=datetime.datetime)
     created_by = Relationship("User", has_one="created_by")
     updated_by = Relationship("User", has_one="updated_by")
 
     async def save(self):
-        self.updated_at = datetime.datetime.now()
+        self.updated_at = naive_now
+        self.updated_by = Context.get_user()
         await super().save()
 
 
@@ -36,6 +36,7 @@ class IdMixin:
         primary_key=True,
         data_type=str,
         length=30,
+        nullable=False,
         default_factory=generate_lexicographical_uuid,
     )
 

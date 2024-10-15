@@ -54,7 +54,7 @@ def dumb_datetime():
     return datetime.datetime.now(tz=datetime.timezone.utc).replace(tzinfo=None)
 
 
-class Configuration(Model, Public, IdMixin):
+class Configuration(Model, Public):
     _table_name = "configuration"
     token_secret = DatabaseField(
         nullable=False,

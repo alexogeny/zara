@@ -1,17 +1,55 @@
 import datetime
 import hashlib
 import os
-from typing import Callable, Dict, Type
+from typing import Dict, Type
 
 from zara.utilities.database.orm import DatabaseField, Model, Public, Relationship
 
+SQL_TYPES = ["VARCHAR", "INTEGER", "FLOAT", "BOOLEAN", "TIMESTAMP", "TEXT"]
+
+
+def get_type_from_sql(sql: str) -> str:
+    if "VARCHAR" in sql:
+        return "VARCHAR"
+    elif "INTEGER" in sql:
+        return "INTEGER"
+    elif "FLOAT" in sql:
+        return "FLOAT"
+    elif "BOOLEAN" in sql:
+        return "BOOLEAN"
+    elif "TIMESTAMP" in sql:
+        return "TIMESTAMP"
+    return "TEXT"
+
+
+def get_length_from_sql(sql):
+    if "VARCHAR" in sql:
+        return sql.split("(")[1].split(")")[0]
+    return None
+
+
+def get_auto_increment_from_sql(sql):
+    if "AUTOINCREMENT" in sql:
+        return True
+    return False
+
+
+def get_default_from_sql(sql):
+    if "DEFAULT" in sql:
+        return sql.split("DEFAULT")[1].split()[0]
+    return None
+
 
 def SQL(x):
-    return f"await conn.execute('{x}')"
+    return f'await conn.execute("{x}")'
 
 
 def add_column(table, column_name, info):
     return SQL(f"ALTER TABLE {table} ADD COLUMN {column_name} {info}")
+
+
+def add_prop(table, column_name, info):
+    return SQL(f"ALTER TABLE {table} ALTER COLUMN {column_name} {info}")
 
 
 def change_type(table, column, to_type):
@@ -32,6 +70,72 @@ def drop_prop(table, field, prop):
 
 def drop_table(table):
     return SQL(f"DROP TABLE IF EXISTS {table}")
+
+
+def generate_field_modifications(model_name, field_name, field_info, prev_schema):
+    ops = []
+
+    def add_operation(operation):
+        ops.append(operation)
+
+    if field_name not in prev_schema:
+        add_operation(drop_column(model_name, field_name))
+        return ops
+
+    field_type, field_length = field_info["type"], field_info.get("length", None)
+    if field_length is not None:
+        field_type = f"VARCHAR({field_length})"
+
+    field_type_text = field_info["type"]
+
+    if field_type_text != prev_schema[field_name]["type"].strip():
+        if field_type not in SQL_TYPES:
+            enum_data = field_info["enum"]
+            enum_values = ", ".join([f"'{v.value}'" for v in enum_data])
+            enum_name = f"{field_type}"
+            add_operation(SQL(f"CREATE TYPE {enum_name} AS ENUM ({enum_values})"))
+            field_type_text = enum_name
+
+        add_operation(change_type(model_name, field_name, field_type_text))
+
+    if field_info["nullable"] != prev_schema[field_name].get("nullable", True):
+        if field_info["nullable"] is True:
+            add_operation(drop_prop(model_name, field_name, "NOT NULL"))
+        else:
+            add_operation(add_prop(model_name, field_name, "NOT NULL"))
+
+    if field_info["unique"] != prev_schema[field_name].get("unique", False):
+        if field_info["unique"] is True:
+            add_operation(add_prop(model_name, field_name, "UNIQUE"))
+        else:
+            add_operation(drop_prop(model_name, field_name, "UNIQUE"))
+
+    new_default = field_info.get("default", None)
+    old_default = prev_schema[field_name].get("default", None)
+    if (
+        new_default != old_default
+        and not callable(new_default)
+        and field_type in SQL_TYPES
+    ):
+        add_operation(
+            f"await conn.execute('ALTER TABLE {model_name} ALTER COLUMN {field_name} SET DEFAULT {new_default}')"
+        )
+    elif (
+        new_default != old_default
+        and not callable(new_default)
+        and field_type not in SQL_TYPES
+    ):
+        add_operation(
+            f"await conn.execute(\"ALTER TABLE {model_name} ALTER COLUMN {field_name} SET DEFAULT '{new_default.value}'\")"
+        )
+
+    if field_info["primary_key"] != prev_schema[field_name].get("primary_key", False):
+        if field_info["primary_key"] is True:
+            add_operation(add_prop(model_name, field_name, "ADD PRIMARY KEY"))
+        else:
+            add_operation(drop_prop(model_name, field_name, "ADD PRIMARY KEY"))
+
+    return ops
 
 
 class MigrationGenerator:
@@ -184,40 +288,6 @@ class MigrationGenerator:
 
         return operations
 
-    @staticmethod
-    def get_type_from_sql(sql):
-        if "VARCHAR" in sql:
-            return "str"
-        elif "INTEGER" in sql:
-            return "int"
-        elif "FLOAT" in sql:
-            return "float"
-        elif "BOOLEAN" in sql:
-            return "bool"
-        elif "TIMESTAMP" in sql:
-            return "datetime"
-        else:
-            return "str"
-
-    @staticmethod
-    def get_length_from_sql(sql):
-        if "VARCHAR" in sql:
-            return sql.split("(")[1].split(")")[0]
-        else:
-            return None
-
-    @staticmethod
-    def get_auto_increment_from_sql(sql):
-        if "AUTOINCREMENT" in sql:
-            return True
-        return False
-
-    @staticmethod
-    def get_default_from_sql(sql):
-        if "DEFAULT" in sql:
-            return sql.split("DEFAULT")[1].split()[0]
-        return None
-
     def apply_operations(self, state, operations):
         for op in operations:
             if op.startswith("CREATE TABLE"):
@@ -227,7 +297,7 @@ class MigrationGenerator:
                     txt = column.strip(",").strip()
                     column_name = txt.split()[0]
                     result = {
-                        "type": self.get_type_from_sql(txt),
+                        "type": get_type_from_sql(txt),
                         "primary_key": "PRIMARY KEY" in txt,
                         "nullable": "NOT NULL" not in txt,
                         "default": None,
@@ -272,18 +342,19 @@ class MigrationGenerator:
                 continue
             if isinstance(field, DatabaseField):
                 schema[name] = {
-                    "type": field.data_type.__name__,
+                    "type": field.data_type,
                     "primary_key": field.primary_key,
                     "nullable": field.nullable,
                     "default": field.default,
                     "unique": field.unique,
                     "relation": False,
+                    "enum": field.get_enum(),
                 }
             elif isinstance(field, Relationship):
                 column_name = field._sql_column_name()
                 if column_name is not None:
                     schema[column_name] = {
-                        "type": "str",
+                        "type": field.data_type,
                         "primary_key": False,
                         "nullable": True,
                         "default": None,
@@ -308,17 +379,19 @@ class MigrationGenerator:
                 for field_name, field_info in current_schema.items():
                     if field_name not in prev_schema:
                         if field_info.get("relation", False) is False:
-                            field_type = self.get_field_type(field_info)
-                            ops.append(add_column(model_name, field_name, field_type))
-                        elif (
-                            fname := field_info.get("primary_key", "")
-                        ) not in prev_schema:
-                            ops.append(add_column(model_name, fname, "VARCHAR(30)"))
+                            ops.append(
+                                add_column(model_name, field_name, field_info["type"])
+                            )
+                        elif field_name not in prev_schema:
+                            ops.append(
+                                add_column(model_name, field_name, "VARCHAR(30)")
+                            )
+                            relname = field_info.get("relation_name")
                             fkop = next(
                                 (
                                     x
                                     for x in model._get_relation_constraints()
-                                    if fname in x
+                                    if relname in x and field_name in x
                                 ),
                                 None,
                             )
@@ -327,36 +400,14 @@ class MigrationGenerator:
                     elif field_name in prev_schema and field_name not in current_schema:
                         if field_info.get("relation", False) is False:
                             ops.append(drop_column(model_name, field_name))
-                        elif (
-                            fname := field_info.get("primary_key", "")
-                        ) not in prev_schema:
-                            ops.append(drop_column(model_name), fname)
+                        elif field_name not in prev_schema:
+                            ops.append(drop_column(model_name, field_name))
                     else:
-                        if field_info["type"] != prev_schema[field_name]["type"]:
-                            field_type = self.get_field_type(field_info)
-                            ops.append(change_type(model_name, field_name, field_type))
-                        if field_info["nullable"] != prev_schema[field_name].get(
-                            "nullable"
-                        ):
-                            ops.append(drop_prop(model_name, field_name, "NOT NULL"))
-                        if field_info["unique"] != prev_schema[field_name].get(
-                            "unique"
-                        ):
-                            ops.append(drop_prop(model_name, field_name, "UNIQUE"))
-                        if (
-                            field_info["default"]
-                            != prev_schema[field_name].get("default")
-                            and field_info["default"] is not Callable
-                        ):
-                            ops.append(
-                                f"await conn.execute('ALTER TABLE {model_name} ALTER COLUMN {field_name} SET DEFAULT {field_info['default']}')"
+                        ops.extend(
+                            generate_field_modifications(
+                                model_name, field_name, field_info, prev_schema
                             )
-                        if field_info["primary_key"] != prev_schema[field_name].get(
-                            "primary_key"
-                        ):
-                            ops.append(
-                                f"await conn.execute('ALTER TABLE {model_name} ALTER COLUMN {field_name} SET PRIMARY KEY')"
-                            )
+                        )
 
         if not ops and not post_ops:
             return ["pass"], [], []
@@ -382,20 +433,14 @@ class MigrationGenerator:
                         if field.get("relation", False) is True:
                             fk_name = field.get("relation_name")
                             pre_ops.append(drop_constraint(model_name, fk_name))
-                        operations.append(drop_table(model_name))
+                        operations.extend(
+                            generate_field_modifications(
+                                model_name, field_name, field, previous_schema
+                            )
+                        )
         if not operations:
             return ["pass"], [], []
         return operations, pre_ops, post_ops
-
-    def get_field_type(self, field_info):
-        type_mapping = {
-            "str": "VARCHAR",
-            "int": "INTEGER",
-            "float": "FLOAT",
-            "bool": "BOOLEAN",
-            "datetime": "TIMESTAMP",
-        }
-        return type_mapping.get(field_info["type"], "TEXT")
 
     def get_latest_migration(self):
         migrations = sorted(os.listdir(self.migrations_dir))
