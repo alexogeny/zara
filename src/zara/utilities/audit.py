@@ -1,12 +1,7 @@
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
-
 from zara.application.events import Event
 from zara.utilities.context import Context
 from zara.utilities.database.orm import AsyncDB, DatabaseManager
-
-if TYPE_CHECKING:
-    pass
+from zara.utilities.time_and_date import now
 
 
 async def create_audit_log(event: Event):
@@ -35,7 +30,7 @@ async def create_audit_log(event: Event):
         object_type=object_type,
         event_name=f"{object_type}{object_action.title()}Event",
         description=f"New {object_type} {object_action}",
-        at=datetime.now(tz=timezone.utc).replace(tzinfo=None),
+        at=now(naive=True),
         loc=where or "unknown",
         is_system=is_system,
         change_snapshot="_",
